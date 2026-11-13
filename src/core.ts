@@ -6,6 +6,9 @@ import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js'
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js'
 import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js'
+import { Line2 } from 'three/examples/jsm/lines/Line2.js'
+import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js'
+import { LineGeometry } from 'three/examples/jsm/lines/LineGeometry.js'
 import {
   DEFAULT_THEME,
   mergeOptions,
@@ -18,8 +21,9 @@ import {
   normalizeRoute,
   buildRouteGeometry,
   buildCurtainGeometry,
-  buildTopLineGeometry,
+  buildTopLinePoints,
   buildGroundGlowGeometry,
+  buildGroundGridSegments,
   pointAtDistance,
   type RouteGeometry,
 } from './route'
@@ -176,11 +180,12 @@ const TURN_ICON = `<svg class="na-arrow-icon" viewBox="0 0 24 24" fill="#ffffff"
 
 export interface NaviArrowParams {
   curtainHeight: number
-  curtainWidth: number
   opacity: number
   flowSpeed: number
   scanLines: number
   bloomStrength: number
+  /** 地面光晕全宽（米） */
+  glowWidth: number
 }
 
 export class NaviArrowCore {
@@ -196,12 +201,15 @@ export class NaviArrowCore {
   private alphaPass?: ShaderPass
   private curtainMesh?: THREE.Mesh
   private curtainMat?: THREE.ShaderMaterial
-  private topLineMesh?: THREE.Mesh
-  private topLineMat?: THREE.MeshBasicMaterial
+  private topLine?: Line2
+  private topLineMat?: LineMaterial
   private groundMesh?: THREE.Mesh
   private groundMat?: THREE.ShaderMaterial
   private chevronGroup?: THREE.Group
   private routeGeo?: RouteGeometry
+  private groundGrid?: THREE.LineSegments
+  /** 地平线校准状态 */
+  horizon: { horizonY: number; vanishX: number; pitchDeg: number; enabled: boolean }
 
   rootEl!: HTMLElement
   theme!: NaviTheme
@@ -222,13 +230,15 @@ export class NaviArrowCore {
     this.opts = mergeOptions({ autoRender: true, visible: true }, options) as any
     this.theme = { ...DEFAULT_THEME, ...(options.theme ?? {}) }
     this.params = {
-      curtainHeight: options.curtainHeight ?? 0.4,
-      curtainWidth: (options.curtainWidth ?? 0.36) / 2, // API 里 curtainWidth 是全宽
+      curtainHeight: options.curtainHeight ?? 0.5,
       opacity: this.theme.nearOpacity,
       flowSpeed: options.flowSpeed ?? 2.5,
       scanLines: 12,
       bloomStrength: 0.5,
+      glowWidth: 1.2,
     }
+    /** 地平线校准：背景图地平线（0..1 高度）与消失点 x（0..1 宽度） */
+    this.horizon = { horizonY: 0.45, vanishX: 0.5, pitchDeg: -10, enabled: false }
 
     // UI（Shadow DOM 隔离样式）
     this.shadow = (container as any).attachShadow?.({ mode: 'open' }) ?? null
@@ -274,6 +284,8 @@ export class NaviArrowCore {
     const h = this.container.clientHeight || 300
     this.renderer.setSize(w, h, false)
     this.composer?.setSize(w, h)
+    this.bloomPass?.setSize(w / 2, h / 2)
+    this.topLineMat?.resolution.set(w, h)
     this.camera.aspect = w / h
     this.camera.updateProjectionMatrix()
   }
@@ -281,7 +293,9 @@ export class NaviArrowCore {
   private setupComposer() {
     this.composer = new EffectComposer(this.renderer)
     this.composer.addPass(new RenderPass(this.scene, this.camera))
+    // bloom 半分辨率（移动端性能），低阈值只让顶线和流动带发光
     this.bloomPass = new UnrealBloomPass(new THREE.Vector2(1, 1), this.params.bloomStrength, 0.4, 0.55)
+    this.bloomPass.resolution = new THREE.Vector2(0.5, 0.5)
     this.composer.addPass(this.bloomPass)
     // 透明背景 alpha 修复：UnrealBloomPass 会把 alpha 重置为 1，
     // 这里按亮度重建 alpha（发光叠加型 AR 的标准做法），让背景透出来。
@@ -358,31 +372,34 @@ export class NaviArrowCore {
         scanLines: this.params.scanLines,
       })
     }
-    const geo = buildCurtainGeometry(this.routeGeo, this.params.curtainHeight, this.params.curtainWidth)
+    const geo = buildCurtainGeometry(this.routeGeo, this.params.curtainHeight)
     this.curtainMesh = new THREE.Mesh(geo, this.curtainMat)
     this.curtainMesh.frustumCulled = false
     this.scene.add(this.curtainMesh)
 
-    // 2. 顶边亮线（TubeGeometry）
-    if (this.topLineMesh) {
-      this.scene.remove(this.topLineMesh)
-      this.topLineMesh.geometry.dispose()
+    // 2. 顶边亮线（Line2 屏幕空间细线：近 ~2px，远更细）
+    if (this.topLine) {
+      this.scene.remove(this.topLine)
+      this.topLine.geometry.dispose()
     }
     if (!this.topLineMat) {
-      // 顶边亮线：细、亮，但不要白到发光成"粗管子"
-      this.topLineMat = new THREE.MeshBasicMaterial({
+      this.topLineMat = new LineMaterial({
         color: new THREE.Color(this.theme.highlight),
+        linewidth: 2, // 屏幕像素（worldUnits=false）
         transparent: true,
-        opacity: 0.85,
+        opacity: 0.9,
         depthWrite: false,
         blending: THREE.AdditiveBlending,
       })
     }
-    this.topLineMesh = new THREE.Mesh(buildTopLineGeometry(this.routeGeo, 0.008), this.topLineMat)
-    this.topLineMesh.frustumCulled = false
-    this.scene.add(this.topLineMesh)
+    const lineGeo = new LineGeometry()
+    const pts = buildTopLinePoints(this.routeGeo)
+    lineGeo.setPositions(pts.flatMap((p) => [p.x, p.y, p.z]))
+    this.topLine = new Line2(lineGeo, this.topLineMat)
+    this.topLine.frustumCulled = false
+    this.scene.add(this.topLine)
 
-    // 3. 地面光迹
+    // 3. 地面光晕（~1m 宽、羽化边缘、低 α）
     if (this.groundMesh) {
       this.scene.remove(this.groundMesh)
       this.groundMesh.geometry.dispose()
@@ -391,13 +408,13 @@ export class NaviArrowCore {
       this.groundMat = createCurtainMaterial({
         color: this.theme.primary,
         topColor: this.theme.highlight,
-        opacity: 0.22,
+        opacity: this.params.opacity,
         flowSpeed: this.params.flowSpeed,
         scanLines: 6,
+        isGround: true,
       })
-      this.groundMat.uniforms.uScanLines.value = 6
     }
-    this.groundMesh = new THREE.Mesh(buildGroundGlowGeometry(this.routeGeo), this.groundMat)
+    this.groundMesh = new THREE.Mesh(buildGroundGlowGeometry(this.routeGeo, this.params.glowWidth / 2), this.groundMat)
     this.groundMesh.frustumCulled = false
     this.scene.add(this.groundMesh)
 
@@ -414,21 +431,139 @@ export class NaviArrowCore {
       this.curtainMat.uniforms.uTopColor.value.set(this.theme.highlight)
     }
     if (this.groundMat) {
-      this.groundMat.uniforms.uOpacity.value = this.params.opacity * 0.6
+      this.groundMat.uniforms.uOpacity.value = this.params.opacity
       this.groundMat.uniforms.uFlowSpeed.value = this.params.flowSpeed
+      this.groundMat.uniforms.uColor.value.set(this.theme.primary)
     }
     if (this.topLineMat) {
       this.topLineMat.color.set(this.theme.highlight)
     }
     if (this.bloomPass) this.bloomPass.strength = this.params.bloomStrength
-    if (this.routeGeo && (this.curtainMesh || this.topLineMesh)) {
+    if (this.routeGeo) {
       // 高度变化需要重建几何
-      this.routeGeo.topPoints.forEach((p, i) => {
-        p.y = this.params.curtainHeight
-        void i
-      })
+      if (this.routeGeo.topPoints[0].y !== this.params.curtainHeight) {
+        this.routeGeo.topPoints.forEach((p) => { p.y = this.params.curtainHeight })
+      }
       this.rebuildCurtain()
     }
+  }
+
+  /**
+   * 地平线校准（REDO3 核心）：
+   * 根据背景图的地平线 horizonY（0..1 图像高度）与消失点 vanishX（0..1 宽度），
+   * 反推 3D 相机 pitch，使 3D 地平线（y=眼高处无穷远点）精确落在 horizonY 上。
+   * 明确处理 object-fit:cover 裁剪，任意视口比例下都成立。
+   */
+  setHorizonCalibration(cfg: { horizonY: number; vanishX: number; eyeHeight?: number }) {
+    this.horizon.horizonY = cfg.horizonY
+    this.horizon.vanishX = cfg.vanishX
+    this.horizon.enabled = true
+    const eye = cfg.eyeHeight ?? 1.6
+    // object-fit:cover 裁剪：背景图与视口宽高比不同时，图像被放大裁切。
+    // 3D canvas 铺满视口（与视口同比例），photo 的 horizonY 是相对整图的。
+    // cover 缩放后图像可见比例：视口宽/图宽 与 视口高/图高 取大者；裁掉上下（或左右）。
+    // 需要知道背景图原始宽高比 —— 由 demo 页通过 setPhotoAspect 传入，缺省按视口=图（无裁剪）。
+    const visibleHorizonY = this.photoToViewportY(this.horizon.horizonY)
+    // 3D 地平线在 NDC 里的 y：pitch=θ（正=向上）时，地平线（眼高无穷远）在视轴下方 θ，
+    // NDC_y = -tan(θ)/tan(fovY/2)。要求 NDC_y = 1 - 2*visibleHorizonY：
+    //   tan(θ) = (2*visibleHorizonY - 1) * tan(fovY/2)
+    // 注意 three.js Euler X 旋转正方向是向上看。
+    const fovY = THREE.MathUtils.degToRad(this.camera.fov)
+    const ndcY = 1 - 2 * visibleHorizonY
+    const pitch = Math.atan((2 * visibleHorizonY - 1) * Math.tan(fovY / 2))
+    this.horizon.pitchDeg = THREE.MathUtils.radToDeg(pitch)
+    return this.horizon.pitchDeg
+  }
+
+  /** 背景照片原始宽高比（供 cover 裁剪换算），如 828/1054 */
+  setPhotoAspect(aspect: number) {
+    this.photoAspect = aspect
+  }
+
+  private photoAspect = 0
+
+  /** 把照片坐标的 y（0..1）换算到视口坐标 y（0..1），处理 object-fit:cover 上下裁剪 */
+  private photoToViewportY(photoY: number): number {
+    if (!this.photoAspect) return photoY // 未知则假定无裁剪
+    const vw = this.container.clientWidth || 1
+    const vh = this.container.clientHeight || 1
+    const viewportAspect = vw / vh
+    if (viewportAspect <= this.photoAspect) {
+      // 视口更「竖」：图按宽度铺满，上下裁剪
+      const visibleFraction = viewportAspect / this.photoAspect // 可见高度占整图比例
+      const top = (1 - visibleFraction) / 2
+      return (photoY - top) / visibleFraction
+    }
+    // 视口更「横」：图按高度铺满，左右裁剪，y 不变
+    return photoY
+  }
+
+  /** 把视口坐标 x（0..1）换算回照片坐标 x（cover 左右裁剪时） */
+  viewportToPhotoX(viewportX: number): number {
+    if (!this.photoAspect) return viewportX
+    const vw = this.container.clientWidth || 1
+    const vh = this.container.clientHeight || 1
+    const viewportAspect = vw / vh
+    if (viewportAspect > this.photoAspect) {
+      const visibleFraction = this.photoAspect / viewportAspect
+      const left = (1 - visibleFraction) / 2
+      return (viewportX * (1 / viewportAspect) * 0 + left + viewportX * visibleFraction)
+    }
+    return viewportX
+  }
+
+  /** 地面网格调试开关：1m 网格（y=0）延伸到 80m + 地平线 */
+  setGroundGrid(visible: boolean) {
+    if (visible && !this.groundGrid) {
+      const segs = buildGroundGridSegments(80, 1)
+      const positions = new Float32Array(segs.length * 6)
+      segs.forEach(([a, b], i) => {
+        positions.set([a.x, a.y, a.z, b.x, b.y, b.z], i * 6)
+      })
+      const g = new THREE.BufferGeometry()
+      g.setAttribute('position', new THREE.BufferAttribute(positions, 3))
+      this.groundGrid = new THREE.LineSegments(
+        g,
+        new THREE.LineBasicMaterial({ color: 0x00ff88, transparent: true, opacity: 0.35 }),
+      )
+      this.groundGrid.frustumCulled = false
+      this.scene.add(this.groundGrid)
+    } else if (!visible && this.groundGrid) {
+      this.scene.remove(this.groundGrid)
+      this.groundGrid.geometry.dispose()
+      ;(this.groundGrid.material as THREE.Material).dispose()
+      this.groundGrid = undefined
+    }
+  }
+
+  /** 当前 pitch（度）——demo 在 applyLook 时用 */
+  get horizonPitchDeg(): number {
+    return this.horizon.enabled ? this.horizon.pitchDeg : this.horizon.pitchDeg || -10
+  }
+
+  /**
+   * 自动验收检查：把所有路线采样点投影到屏幕，
+   * 每个点都必须在地平线之下，最远点距地平线 ≤ 3% 屏高。
+   */
+  validateRouteBelowHorizon(): { ok: boolean; maxAbove: number; farthestGap: number; horizonPx: number; points: Array<{ x: number; y: number }> } {
+    const h = this.container.clientHeight || 1
+    const horizonPx = this.photoToViewportY(this.horizon.horizonY) * h
+    const pts = this.routeGeo?.points ?? []
+    let maxAbove = 0
+    let farthestGap = Infinity
+    const screen: Array<{ x: number; y: number }> = []
+    const v = new THREE.Vector3()
+    for (const p of pts) {
+      v.copy(p).project(this.camera)
+      const sy = (1 - (v.y + 1) / 2) * h
+      screen.push({ x: (v.x + 1) / 2, y: sy / h })
+      maxAbove = Math.max(maxAbove, horizonPx - sy)
+      farthestGap = sy - horizonPx
+    }
+    // 最远点 = 最后一个可见点
+    const farGapPx = Math.abs(farthestGap)
+    const ok = maxAbove <= 0.5 && farGapPx <= h * 0.03 + 8 // 8px 容差
+    return { ok, maxAbove, farthestGap: farGapPx, horizonPx, points: screen }
   }
 
   private rebuildChevrons() {
@@ -620,8 +755,9 @@ export class NaviArrowCore {
       mats.forEach((m: any) => m?.dispose?.())
     }
     if (this.curtainMesh) disposeGeoMat(this.curtainMesh)
-    if (this.topLineMesh) disposeGeoMat(this.topLineMesh)
+    if (this.topLine) disposeGeoMat(this.topLine)
     if (this.groundMesh) disposeGeoMat(this.groundMesh)
+    if (this.groundGrid) disposeGeoMat(this.groundGrid)
     this.chevronGroup?.children.forEach(disposeGeoMat)
     this.bloomPass?.dispose?.()
     this.composer?.dispose?.()

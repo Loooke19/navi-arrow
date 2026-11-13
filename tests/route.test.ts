@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import * as THREE from 'three'
-import { normalizeRoute, buildRouteGeometry, buildCurtainGeometry, buildTopLineGeometry, buildGroundGlowGeometry, pointAtDistance } from '../src/route'
+import { normalizeRoute, buildRouteGeometry, buildCurtainGeometry, buildTopLinePoints, buildGroundGlowGeometry, pointAtDistance } from '../src/route'
 
 const route = [
   [0, 0],
@@ -18,9 +18,11 @@ describe('route geometry', () => {
     expect(pts[1].y).toBe(0)
   })
 
-  it('3D 点保留 y', () => {
-    const pts = normalizeRoute([[0, 1.2, -3], [0, 1.2, -9]])
-    expect(pts[0].y).toBe(1.2)
+  it('3D 点 y 强制贴地为 0', () => {
+    const pts = normalizeRoute([[0, 1.2, -3], [0, 5, -9]])
+    // REDO3：路线必须全部贴地，传入的 y 被丢弃
+    expect(pts[0].y).toBe(0)
+    expect(pts[1].y).toBe(0)
     expect(pts[1].z).toBe(-9)
   })
 
@@ -31,12 +33,12 @@ describe('route geometry', () => {
     expect(g.lengths[0]).toBe(0)
   })
 
-  it('光幕几何：竖直带状，底 y=0 顶 y=height，uv.y 0~1', () => {
+  it('光幕几何：单张 ribbon（每点 2 顶点），底 y=0 顶 y=height，uv.y 0~1', () => {
     const g = buildRouteGeometry(normalizeRoute(route), 12)
-    const height = 0.6
-    const geo = buildCurtainGeometry(g, height, 0.25)
+    const height = 0.5
+    const geo = buildCurtainGeometry(g, height)
     const pos = geo.getAttribute('position') as THREE.BufferAttribute
-    expect(pos.count).toBe(g.points.length * 4)
+    expect(pos.count).toBe(g.points.length * 2)
     const ys: number[] = []
     for (let i = 0; i < pos.count; i++) ys.push(pos.getY(i))
     expect(Math.min(...ys)).toBeCloseTo(0, 5)
@@ -49,14 +51,14 @@ describe('route geometry', () => {
     }
     expect(minV).toBe(0)
     expect(maxV).toBe(1)
-    // 立体的：只渲染左右侧面 2 个面 × 2 三角形 = 每段 12 个索引
-    expect(geo.index!.count).toBe((g.points.length - 1) * 12)
+    // 单张 ribbon：每段 2 三角形 = 6 索引
+    expect(geo.index!.count).toBe((g.points.length - 1) * 6)
   })
 
-  it('顶边亮线 TubeGeometry + 地面光迹几何有效', () => {
+  it('顶边折线点 + 地面光晕几何有效', () => {
     const g = buildRouteGeometry(normalizeRoute(route), 8)
-    const tube = buildTopLineGeometry(g)
-    expect(tube).toBeInstanceOf(THREE.TubeGeometry)
+    const topPts = buildTopLinePoints(g)
+    expect(topPts.length).toBe(g.points.length)
     const ground = buildGroundGlowGeometry(g)
     expect((ground.getAttribute('position') as THREE.BufferAttribute).count).toBe(g.points.length * 2)
   })

@@ -76,15 +76,13 @@ btnPhoto.addEventListener('click', exitCameraMode)
 // ---------- 组件 ----------
 const navi = createNaviArrow(document.getElementById('navi') as HTMLElement, {
   route: [
-    [0, 0],
-    [0, -22],
-    [9, -34],
-    [9, -50],
-    [18, -58],
-    [18, -70],
+    [0, 0],       // 脚前，贴地
+    [0, -28],     // 沿当前人行道直行 28m
+    [7, -34],     // 平滑右转（半径 ~8m）
+    [8.5, -44],   // 转入横街
+    [9, -54],     // 继续直行 ~20m
   ],
-  curtainHeight: 0.4,
-  curtainWidth: 0.9,
+  curtainHeight: 0.6,
   autoRender: false,
   banner: { distance: '20米后', action: '进入', road: '无名路' },
   footer: { enabled: true, distance: '剩余7.9公里', duration: '1小时47分钟' },
@@ -94,10 +92,16 @@ navi.onFooterButton((act) => {
   else document.getElementById('hint')!.textContent = '「地图」按钮（演示）'
 })
 
-// ---------- 相机：眼高 1.6m，FOV 60，路线起点在脚前 1.5m，光幕从画面底边进入 ----------
+// ---------- 地平线校准（REDO3 核心） ----------
+// 街景照片（828×1054）：车道线与楼底收束在 y≈63%、x≈57%
+const PHOTO = { horizonY: 0.63, vanishX: 0.57, aspect: 828 / 1054 }
+navi.setPhotoAspect(PHOTO.aspect)
+const pitchDeg = navi.setHorizonCalibration({ horizonY: PHOTO.horizonY, vanishX: PHOTO.vanishX, eyeHeight: 1.6 })
+
+// ---------- 相机：眼高 1.6m，FOV 60，pitch 由地平线校准得出，路线起点在脚前 1.5m ----------
 const camera = new THREE.PerspectiveCamera(60, 1, 0.05, 300)
 camera.position.set(0, 1.6, 1.5)
-const yawPitch = { yaw: 0, pitch: -0.17 } // 约 -10°，路面占画面下部 ~45%
+const yawPitch = { yaw: 0, pitch: THREE.MathUtils.degToRad(pitchDeg) }
 function applyLook() {
   const e = new THREE.Euler(yawPitch.pitch, yawPitch.yaw, 0, 'YXZ')
   camera.quaternion.setFromEuler(e)
@@ -115,14 +119,15 @@ attachDragLook(document.getElementById('phone')!, (yaw, pitch) => {
 // ---------- lil-gui 调参面板 ----------
 const gui = new GUI({ title: 'navi-arrow 调参' })
 const guiState = {
-  颜色: '#2F7BFF',
+  颜色: '#7FB8FF',
   高度: navi.params.curtainHeight,
-  宽度: navi.params.curtainWidth * 2,
   透明度: navi.params.opacity,
   扫描线: navi.params.scanLines,
   流动速度: navi.params.flowSpeed,
   bloom强度: navi.params.bloomStrength,
-  俯仰角: -10,
+  俯仰角: Math.round(pitchDeg * 10) / 10,
+  地平线: PHOTO.horizonY,
+  地面网格: false,
   随设备转动: false,
   V形箭头: false,
 }
@@ -135,16 +140,21 @@ if (isShot) {
   document.getElementById('modeBar')!.style.display = 'none'
   document.getElementById('modeMsg')!.style.display = 'none'
 }
+// ?grid=1：直接开地面网格（截图用）
+if (new URLSearchParams(location.search).has('grid')) {
+  guiState.地面网格 = true
+  navi.setGroundGrid(true)
+}
+// ?cam=1：自动进相机模式（Playwright 假摄像头截图用）
+if (new URLSearchParams(location.search).has('cam')) {
+  enterCameraMode()
+}
 gui.addColor(guiState, '颜色').onChange((v: string) => {
   ;(navi as any).theme.primary = v
   navi.applyParams()
 })
-gui.add(guiState, '高度', 0.2, 0.8, 0.05).onChange((v: number) => {
+gui.add(guiState, '高度', 0.3, 0.8, 0.05).onChange((v: number) => {
   navi.params.curtainHeight = v
-  navi.applyParams()
-})
-gui.add(guiState, '宽度', 0.1, 0.8, 0.02).onChange((v: number) => {
-  navi.params.curtainWidth = v / 2
   navi.applyParams()
 })
 gui.add(guiState, '透明度', 0.15, 0.8, 0.05).onChange((v: number) => {
@@ -163,11 +173,21 @@ gui.add(guiState, 'bloom强度', 0, 2.5, 0.1).onChange((v: number) => {
   navi.params.bloomStrength = v
   navi.applyParams()
 })
-gui.add(guiState, '俯仰角', -30, 10, 1).onChange((v: number) => {
+gui.add(guiState, '俯仰角', -30, 10, 0.5).onChange((v: number) => {
+  navi.horizon.pitchDeg = v
   yawPitch.pitch = THREE.MathUtils.degToRad(v)
   usingDevice = false // 手动调节时暂停设备朝向
   applyLook()
 })
+gui.add(guiState, '地平线', 0.2, 0.9, 0.01).onChange((v: number) => {
+  const p = navi.setHorizonCalibration({ horizonY: v, vanishX: PHOTO.vanishX, eyeHeight: 1.6 })
+  guiState.俯仰角 = Math.round(p * 10) / 10
+  gui.controllersRecursive().forEach((c) => c.updateDisplay())
+  usingDevice = false
+  yawPitch.pitch = THREE.MathUtils.degToRad(p)
+  applyLook()
+})
+gui.add(guiState, '地面网格').onChange((v: boolean) => navi.setGroundGrid(v))
 gui.add(guiState, '随设备转动').listen().onChange((v: boolean) => {
   if (v && rig.supported && !deviceRigStarted) {
     DeviceOrientationRig.requestPermission().then((ok) => {
@@ -177,10 +197,15 @@ gui.add(guiState, '随设备转动').listen().onChange((v: boolean) => {
   if (!v) { usingDevice = false; applyLook() }
 })
 gui.add(guiState, 'V形箭头').onChange((v: boolean) => navi.setChevrons(v))
+// fps 读数
+const fpsHolder = { FPS: 0 }
+gui.add(fpsHolder, 'FPS').disable()
 
 // ---------- 渲染循环（window.__pauseRender 控制截图） ----------
 const phone = document.getElementById('phone')!
 ;(window as any).__pauseRender = false
+let fpsFrames = 0
+let fpsLast = performance.now()
 function frame() {
   if (!(window as any).__pauseRender) {
     const w = phone.clientWidth
@@ -191,6 +216,13 @@ function frame() {
     }
     navi.setCameraPose(camera.position, camera.quaternion)
     navi.render()
+    fpsFrames++
+    const now = performance.now()
+    if (now - fpsLast >= 1000) {
+      fpsHolder.FPS = fpsFrames
+      fpsFrames = 0
+      fpsLast = now
+    }
     requestAnimationFrame(frame)
   } else {
     setTimeout(() => requestAnimationFrame(frame), 200)

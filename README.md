@@ -2,7 +2,8 @@
 
 可嵌入的 **AR 步行导航引导组件**：视觉 = 大疆 DJI Fly「AR 返航」光幕路线（改为蓝色）+ 百度地图 AR 步导的顶部横幅/底部信息条。
 
-- 光幕（ribbon/curtain）：沿路线竖直挂下的半透明薄纱光幕（去饱和浅蓝 #7FB8FF，自定义 BufferGeometry 竖直侧面网格 + ShaderMaterial：竖直渐变 α0.45→0.05、8~14 条高对比横向扫描线、菲涅尔边缘光、~80m 距离渐隐、流动亮带、600ms 生长动画，AdditiveBlending），顶边细 TubeGeometry 亮线（r=0.008m），底部贴地窄光迹，可选贴地低透明 3D V 形箭头；EffectComposer + UnrealBloomPass（低强度、高阈值，只给顶线和流动带发光）+ 自定义 alpha 保留 pass 保证透明背景正确。路线起点在脚前 1.5m 贴地，光幕从画面底边进入。
+- 光幕（ribbon/curtain）：沿路线中心线的**单一竖直薄纱**（REDO3：自定义 BufferGeometry 单 ribbon + DoubleSide ShaderMaterial：竖直 α 渐变 0.45→0.15、8~14 条高对比横向扫描线、菲涅尔边缘光、~60m 距离渐隐、流动亮带、600ms 生长动画，AdditiveBlending），顶部 Line2 屏幕空间细线（~2px），底部 1.2m 宽羽化地面光晕，可选贴地低透明 3D V 形箭头；EffectComposer + UnrealBloomPass（半分辨率、低强度高阈值）+ 自定义 alpha 保留 pass 保证透明背景正确。
+- **地平线校准**：`setHorizonCalibration({horizonY, vanishX, eyeHeight})` 根据背景图地平线（含 object-fit:cover 裁剪换算）反推相机 pitch，使 3D 路线全程贴地、远端收在地平线（`tests/horizon.test.ts` 自动验收：所有采样点投影在地平线下、最远点距地平线 ≤3% 屏高）；demo 另有「地面网格」调试开关（1m 网格 + 80m，GUI/?grid=1）。
 - 顶部横幅：百度风格圆角胶囊，圆形图标位 + 「20米后 进入 无名路」，蓝色渐变半透明毛玻璃、向右渐隐，文字切换上滑淡入，右上角可选「AR设置」按钮。
 - 底部信息条：「剩余7.9公里 1小时47分钟」，左「退出」右「地图」，可配置/隐藏。
 - 技术栈：TypeScript + Three.js（自定义 ShaderMaterial）+ 原生 DOM/CSS（Shadow DOM 隔离）。
@@ -114,7 +115,7 @@ npm test           # Vitest：配置合并、路线几何生成
 
 - `src/` 核心包（config / route / shader / core / element / react / ar）
 - `demo/` 演示页（含 `assets/street.jpg` 免版权街景背景）
-- `scripts/` Playwright 截图 / 拼图 / 验收脚本
+- `scripts/` Playwright 截图 / 拼图 / 验收脚本（`shot.mjs`、`shot3.mjs`、`grid3.mjs`、`verify.mjs`、`verify-cam.mjs`）
 - `tests/` 单元测试
 - `docs/compare/` 演示页截图与参考帧并排对比图
 - `reference/` 视觉参考素材（大疆 AR 返航逐帧、百度 AR 步导截图）
