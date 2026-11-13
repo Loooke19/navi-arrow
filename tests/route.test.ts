@@ -49,8 +49,8 @@ describe('route geometry', () => {
     }
     expect(minV).toBe(0)
     expect(maxV).toBe(1)
-    // 立体的：底/顶/左右侧面 4 个面 × 2 三角形 = 每段 24 个索引
-    expect(geo.index!.count).toBe((g.points.length - 1) * 24)
+    // 立体的：只渲染左右侧面 2 个面 × 2 三角形 = 每段 12 个索引
+    expect(geo.index!.count).toBe((g.points.length - 1) * 12)
   })
 
   it('顶边亮线 TubeGeometry + 地面光迹几何有效', () => {

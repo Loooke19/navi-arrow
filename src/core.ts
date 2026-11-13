@@ -222,12 +222,12 @@ export class NaviArrowCore {
     this.opts = mergeOptions({ autoRender: true, visible: true }, options) as any
     this.theme = { ...DEFAULT_THEME, ...(options.theme ?? {}) }
     this.params = {
-      curtainHeight: options.curtainHeight ?? 0.6,
-      curtainWidth: (options.curtainWidth ?? 0.5) / 2, // API 里 curtainWidth 是全宽
+      curtainHeight: options.curtainHeight ?? 0.4,
+      curtainWidth: (options.curtainWidth ?? 0.36) / 2, // API 里 curtainWidth 是全宽
       opacity: this.theme.nearOpacity,
       flowSpeed: options.flowSpeed ?? 2.5,
-      scanLines: 40,
-      bloomStrength: 0.45,
+      scanLines: 12,
+      bloomStrength: 0.5,
     }
 
     // UI（Shadow DOM 隔离样式）
@@ -281,7 +281,7 @@ export class NaviArrowCore {
   private setupComposer() {
     this.composer = new EffectComposer(this.renderer)
     this.composer.addPass(new RenderPass(this.scene, this.camera))
-    this.bloomPass = new UnrealBloomPass(new THREE.Vector2(1, 1), this.params.bloomStrength, 0.6, 0.35)
+    this.bloomPass = new UnrealBloomPass(new THREE.Vector2(1, 1), this.params.bloomStrength, 0.4, 0.55)
     this.composer.addPass(this.bloomPass)
     // 透明背景 alpha 修复：UnrealBloomPass 会把 alpha 重置为 1，
     // 这里按亮度重建 alpha（发光叠加型 AR 的标准做法），让背景透出来。
@@ -369,15 +369,16 @@ export class NaviArrowCore {
       this.topLineMesh.geometry.dispose()
     }
     if (!this.topLineMat) {
+      // 顶边亮线：细、亮，但不要白到发光成"粗管子"
       this.topLineMat = new THREE.MeshBasicMaterial({
-        color: new THREE.Color(this.theme.highlight).lerp(new THREE.Color('#ffffff'), 0.5),
+        color: new THREE.Color(this.theme.highlight),
         transparent: true,
-        opacity: 0.95,
+        opacity: 0.85,
         depthWrite: false,
         blending: THREE.AdditiveBlending,
       })
     }
-    this.topLineMesh = new THREE.Mesh(buildTopLineGeometry(this.routeGeo), this.topLineMat)
+    this.topLineMesh = new THREE.Mesh(buildTopLineGeometry(this.routeGeo, 0.008), this.topLineMat)
     this.topLineMesh.frustumCulled = false
     this.scene.add(this.topLineMesh)
 
@@ -390,9 +391,9 @@ export class NaviArrowCore {
       this.groundMat = createCurtainMaterial({
         color: this.theme.primary,
         topColor: this.theme.highlight,
-        opacity: 0.35,
+        opacity: 0.22,
         flowSpeed: this.params.flowSpeed,
-        scanLines: 8,
+        scanLines: 6,
       })
       this.groundMat.uniforms.uScanLines.value = 6
     }
@@ -417,7 +418,7 @@ export class NaviArrowCore {
       this.groundMat.uniforms.uFlowSpeed.value = this.params.flowSpeed
     }
     if (this.topLineMat) {
-      this.topLineMat.color.set(this.theme.highlight).lerp(new THREE.Color('#ffffff'), 0.5)
+      this.topLineMat.color.set(this.theme.highlight)
     }
     if (this.bloomPass) this.bloomPass.strength = this.params.bloomStrength
     if (this.routeGeo && (this.curtainMesh || this.topLineMesh)) {
@@ -459,13 +460,13 @@ export class NaviArrowCore {
     geo.rotateX(-Math.PI / 2)
     geo.translate(0, 0.04, 0)
     const base = new THREE.Color(this.theme.primary)
-    const bright = base.clone().lerp(new THREE.Color('#ffffff'), 0.35)
-    const dark = base.clone().lerp(new THREE.Color('#000000'), 0.25)
+    const bright = base.clone().lerp(new THREE.Color('#ffffff'), 0.25)
+    const dark = base.clone().lerp(new THREE.Color('#000000'), 0.3)
     for (let i = 0; i < (this.opts.chevronCount ?? 3); i++) {
-      // 亮面/暗面双材质：挤出正面亮、侧面暗（材质组：正面/侧面）
+      // 亮面/暗面双材质，整体低不透明度（贴地扁平）
       const mats = [
-        new THREE.MeshBasicMaterial({ color: bright, transparent: true, opacity: 0.92 }),
-        new THREE.MeshBasicMaterial({ color: dark, transparent: true, opacity: 0.9 }),
+        new THREE.MeshBasicMaterial({ color: bright, transparent: true, opacity: 0.35 }),
+        new THREE.MeshBasicMaterial({ color: dark, transparent: true, opacity: 0.3 }),
       ]
       const dist = 1.4 + i * 1.3
       const m = new THREE.Mesh(geo, mats)
@@ -601,7 +602,7 @@ export class NaviArrowCore {
         if (phase < 0) phase += cycle
         const a = phase < 0.15 ? phase / 0.15 : phase > 0.7 ? Math.max(0, 1 - (phase - 0.7) / 0.15) : 1
         const mats = Array.isArray(m.material) ? m.material : [m.material]
-        mats.forEach((mm: any) => { mm.opacity = 0.92 * a })
+        mats.forEach((mm: any) => { mm.opacity = 0.35 * a })
       })
     }
     if (this.composer) this.composer.render()

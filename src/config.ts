@@ -15,9 +15,9 @@ export interface NaviTheme {
 }
 
 export const DEFAULT_THEME: NaviTheme = {
-  primary: '#2F7BFF',
-  highlight: '#7FB4FF',
-  nearOpacity: 0.42,
+  primary: '#7FB8FF',
+  highlight: '#B8D9FF',
+  nearOpacity: 0.45,
   farOpacity: 0.02,
 }
 
@@ -48,6 +48,8 @@ export interface FooterConfig {
 }
 
 export interface NaviArrowOptions {
+  /** 背景模式：'transparent'（默认，宿主自备任意背景/视频）| 'none'（同 transparent，兼容旧用法） */
+  background?: 'transparent' | 'none'
   /** 路线：局部坐标点数组（世界坐标米），y 向上；或 {points, heights} 3D 路径 */
   route?: Array<[number, number, number] | [number, number]> | { points: Array<[number, number, number] | [number, number]> }
   /** 光幕顶边离地高度（米），默认 0.4 */

@@ -2,7 +2,7 @@
 
 可嵌入的 **AR 步行导航引导组件**：视觉 = 大疆 DJI Fly「AR 返航」光幕路线（改为蓝色）+ 百度地图 AR 步导的顶部横幅/底部信息条。
 
-- 光幕（ribbon/curtain）：沿路线竖直挂下的半透明蓝色光幕（自定义 BufferGeometry 立体带状网格 + ShaderMaterial：竖直渐变、细横向扫描线、菲涅尔边缘光、距离渐隐、流动亮带、600ms 生长动画，AdditiveBlending），顶边 TubeGeometry 发光亮线，底部贴地窄光迹，可选 3D 挤出 V 形箭头；EffectComposer + UnrealBloomPass 发光（自定义 alpha 保留 pass 保证透明背景下 bloom 正确）。
+- 光幕（ribbon/curtain）：沿路线竖直挂下的半透明薄纱光幕（去饱和浅蓝 #7FB8FF，自定义 BufferGeometry 竖直侧面网格 + ShaderMaterial：竖直渐变 α0.45→0.05、8~14 条高对比横向扫描线、菲涅尔边缘光、~80m 距离渐隐、流动亮带、600ms 生长动画，AdditiveBlending），顶边细 TubeGeometry 亮线（r=0.008m），底部贴地窄光迹，可选贴地低透明 3D V 形箭头；EffectComposer + UnrealBloomPass（低强度、高阈值，只给顶线和流动带发光）+ 自定义 alpha 保留 pass 保证透明背景正确。路线起点在脚前 1.5m 贴地，光幕从画面底边进入。
 - 顶部横幅：百度风格圆角胶囊，圆形图标位 + 「20米后 进入 无名路」，蓝色渐变半透明毛玻璃、向右渐隐，文字切换上滑淡入，右上角可选「AR设置」按钮。
 - 底部信息条：「剩余7.9公里 1小时47分钟」，左「退出」右「地图」，可配置/隐藏。
 - 技术栈：TypeScript + Three.js（自定义 ShaderMaterial）+ 原生 DOM/CSS（Shadow DOM 隔离）。
@@ -86,7 +86,18 @@ npm install
 npm run dev        # http://localhost:5173
 ```
 
-演示页默认背景是一张免版权实拍街景照片（`demo/assets/street.jpg`，来源：Unsplash，Unsplash License，可免费商用无需署名）；可点击按钮改用 `getUserMedia` 后置摄像头当 AR 背景。真机用 DeviceOrientation 驱动朝向，桌面端按住拖拽模拟转头。右侧 lil-gui 面板可实时调颜色、光幕高度/宽度/透明度、扫描线密度、流动速度、bloom 强度、V 形箭头开关。支持 `?t=秒` 快进、`?shot=1` 截图模式（隐藏 GUI）。
+演示页有两个背景模式按钮（组件外演示 chrome）：**「街景照片」**（默认，免版权 Unsplash 实拍图 `demo/assets/street.jpg`）和**「相机实景」**（`getUserMedia` 后置摄像头全屏视频，光幕/UI 叠加其上；权限被拒/无摄像头/非安全上下文时提示中文错误并回退照片模式，切回时停止媒体轨道）。真机可用 DeviceOrientation 让路线随手机姿态变化（lil-gui「随设备转动」开关 +「俯仰角」手动滑杆）。桌面端按住拖拽模拟转头，右侧 lil-gui 可实时调颜色、光幕高度/宽度/透明度、扫描线密度、流动速度、bloom 强度、俯仰角、V 形箭头。支持 `?t=秒` 快进、`?shot=1` 截图模式。
+
+**手机局域网测试（摄像头必须 HTTPS）：**
+
+```bash
+npm run dev:https   # 或 dev:https:strict
+# 终端会打印 Network: https://192.168.x.x:5173/
+```
+
+手机连同一 Wi-Fi，浏览器打开该 https 地址 → 接受自签名证书警告 → 点「相机实景」授权摄像头。
+
+组件本身保持 `background: 'transparent'`（默认）：不渲染任何背景，宿主页面可在 canvas 后面放任意 `<video>`/图片/AR 引擎画面。
 
 ## 截图对比
 

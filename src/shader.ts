@@ -43,15 +43,15 @@ const frag = /* glsl */ `
   varying float vDist;
 
   void main() {
-    // 距离渐隐（fog 式）
-    float distFade = 1.0 - smoothstep(18.0, 70.0, vDist);
+    // 距离渐隐（fog 式，~80m 处完全消失）
+    float distFade = 1.0 - smoothstep(25.0, 80.0, vDist);
 
-    // 竖直渐变：顶部最亮 α≈0.7 → 底部 α≈0.15；底部 15% 内快速衰减避免"地垫"感
-    float vertGrad = mix(0.15, 0.7, pow(vUv.y, 1.15));
-    vertGrad *= smoothstep(0.0, 0.18, vUv.y);
+    // 竖直渐变：顶部 α≈0.45 → 底部 α≈0.05（街道照片能透出来）；底部快速衰减避免"地垫"感
+    float vertGrad = mix(0.05, 0.45, pow(vUv.y, 1.1));
+    vertGrad *= smoothstep(0.0, 0.15, vUv.y);
 
-    // 细横向扫描线（固定在线网上，轻微滚动）
-    float scan = 0.78 + 0.22 * step(0.5, fract(vUv.y * uScanLines - uTime * 0.15));
+    // 细横向扫描线（8~14 条覆盖光帘高度，高对比清晰可见）
+    float scan = 0.62 + 0.38 * step(0.5, fract(vUv.y * uScanLines - uTime * 0.12));
 
     // 菲涅尔边缘光：视线与面越平行越亮
     vec3 viewDir = normalize(cameraPosition - vWorldPos);
@@ -65,13 +65,13 @@ const frag = /* glsl */ `
     band *= step(0.999, uReveal);
 
     float a = vertGrad * scan * distFade * uOpacity;
-    a += fres * 0.28 * distFade * uOpacity * smoothstep(0.0, 0.15, vUv.y);
-    a += band * 0.35 * distFade * uOpacity;
-    // 顶沿加重（衔接 TubeGeometry 亮线）
-    a += smoothstep(0.92, 1.0, vUv.y) * 0.25 * distFade * uOpacity;
+    a += fres * 0.16 * distFade * uOpacity * smoothstep(0.0, 0.15, vUv.y);
+    a += band * 0.3 * distFade * uOpacity;
+    // 顶沿衔接 TubeGeometry 亮线
+    a += smoothstep(0.93, 1.0, vUv.y) * 0.2 * distFade * uOpacity;
 
-    vec3 col = mix(uColor, uTopColor, smoothstep(0.6, 1.0, vUv.y) * 0.7 + band * 0.3);
-    gl_FragColor = vec4(col * (1.0 + band * 0.8 + fres * 0.4), clamp(a, 0.0, 1.0));
+    vec3 col = mix(uColor, uTopColor, smoothstep(0.6, 1.0, vUv.y) * 0.6 + band * 0.3);
+    gl_FragColor = vec4(col * (1.0 + band * 0.5 + fres * 0.3), clamp(a, 0.0, 1.0));
     if (gl_FragColor.a < 0.004) discard;
   }
 `

@@ -94,8 +94,7 @@ export function buildCurtainGeometry(
     if (i < n - 1) {
       const a = base, b = base + 1, c = base + 2, d = base + 3
       const e = (i + 1) * 4, f = e + 1, g = e + 2, h = e + 3
-      indices.push(a, e, b, b, e, f)   // 底面
-      indices.push(c, g, d, d, g, h)   // 顶面
+      // 只渲染左右竖直面（去掉顶/底面），避免近看成"管子"
       indices.push(a, g, c, a, e, g)   // 左侧面
       indices.push(b, h, d, b, f, h)   // 右侧面
     }

@@ -3,13 +3,15 @@
  */
 import * as THREE from 'three'
 import { createNaviArrow } from '../src/index'
-import { attachDragLook, startCamera, DeviceOrientationRig } from '../src/ar'
+import { attachDragLook, DeviceOrientationRig } from '../src/ar'
 import GUI from 'lil-gui'
 
-// ---------- 背景 ----------
+// ---------- 背景：街景照片 / 相机实景 双模式 ----------
 const bgLayer = document.getElementById('bg') as HTMLElement
 const video = document.getElementById('cam') as HTMLVideoElement
-const perm = document.getElementById('perm') as HTMLElement
+const modeMsg = document.getElementById('modeMsg') as HTMLElement
+const btnPhoto = document.getElementById('btnPhoto') as HTMLButtonElement
+const btnCam = document.getElementById('btnCam') as HTMLButtonElement
 
 // 默认真实街景照片（免版权，来源见 README）
 const img = document.createElement('img')
@@ -19,30 +21,70 @@ bgLayer.appendChild(img)
 
 const rig = new DeviceOrientationRig()
 let usingDevice = false
+let camStream: MediaStream | null = null
+let deviceRigStarted = false
 
-document.getElementById('camBtn')!.addEventListener('click', async () => {
-  const ok = await DeviceOrientationRig.requestPermission()
-  const stream = await startCamera(video)
-  if (stream) {
-    video.style.display = 'block'
-    bgLayer.style.display = 'none'
-    perm.style.display = 'none'
-    if (ok && rig.supported) rig.start((q) => { usingDevice = true; camera.quaternion.copy(q) })
+function showModeMsg(text: string) {
+  modeMsg.textContent = text
+  setTimeout(() => { if (modeMsg.textContent === text) modeMsg.textContent = '' }, 4000)
+}
+
+async function enterCameraMode() {
+  // 摄像头需要安全上下文（HTTPS 或 localhost）
+  if (!navigator.mediaDevices?.getUserMedia) {
+    showModeMsg('当前环境不支持摄像头（需要 HTTPS），已回退到街景照片')
+    return
   }
-})
+  try {
+    camStream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } },
+      audio: false,
+    })
+  } catch (e: any) {
+    const reason = e?.name === 'NotAllowedError' ? '权限被拒绝' : e?.name === 'NotFoundError' ? '未找到摄像头' : String(e?.message ?? e)
+    showModeMsg(`无法开启相机（${reason}），已回退到街景照片`)
+    return
+  }
+  video.srcObject = camStream
+  await video.play().catch(() => {})
+  video.style.display = 'block'
+  bgLayer.style.display = 'none'
+  btnCam.classList.add('active')
+  btnPhoto.classList.remove('active')
+  // iOS 需要在同一手势里请求权限；手机上开启后路线随手机俯仰/转动
+  const ok = await DeviceOrientationRig.requestPermission()
+  if (ok && rig.supported && !deviceRigStarted) {
+    rig.start((q) => { usingDevice = true; camera.quaternion.copy(q) })
+    deviceRigStarted = true
+  }
+}
+
+function exitCameraMode() {
+  camStream?.getTracks().forEach((t) => t.stop())
+  camStream = null
+  video.srcObject = null
+  video.style.display = 'none'
+  bgLayer.style.display = 'block'
+  btnPhoto.classList.add('active')
+  btnCam.classList.remove('active')
+  usingDevice = false
+}
+
+btnCam.addEventListener('click', enterCameraMode)
+btnPhoto.addEventListener('click', exitCameraMode)
 
 // ---------- 组件 ----------
 const navi = createNaviArrow(document.getElementById('navi') as HTMLElement, {
   route: [
     [0, 0],
-    [0, -12],
-    [5, -18],
-    [5, -30],
-    [12, -36],
-    [12, -48],
+    [0, -22],
+    [9, -34],
+    [9, -50],
+    [18, -58],
+    [18, -70],
   ],
-  curtainHeight: 0.6,
-  curtainWidth: 0.32,
+  curtainHeight: 0.4,
+  curtainWidth: 0.9,
   autoRender: false,
   banner: { distance: '20米后', action: '进入', road: '无名路' },
   footer: { enabled: true, distance: '剩余7.9公里', duration: '1小时47分钟' },
@@ -52,10 +94,10 @@ navi.onFooterButton((act) => {
   else document.getElementById('hint')!.textContent = '「地图」按钮（演示）'
 })
 
-// ---------- 相机：眼高 1.6m，FOV 60，略微俯视；路线起点在脚前方 3m ----------
+// ---------- 相机：眼高 1.6m，FOV 60，路线起点在脚前 1.5m，光幕从画面底边进入 ----------
 const camera = new THREE.PerspectiveCamera(60, 1, 0.05, 300)
-camera.position.set(0, 1.6, 4.5)
-const yawPitch = { yaw: 0, pitch: -0.12 }
+camera.position.set(0, 1.6, 1.5)
+const yawPitch = { yaw: 0, pitch: -0.17 } // 约 -10°，路面占画面下部 ~45%
 function applyLook() {
   const e = new THREE.Euler(yawPitch.pitch, yawPitch.yaw, 0, 'YXZ')
   camera.quaternion.setFromEuler(e)
@@ -80,33 +122,36 @@ const guiState = {
   扫描线: navi.params.scanLines,
   流动速度: navi.params.flowSpeed,
   bloom强度: navi.params.bloomStrength,
+  俯仰角: -10,
+  随设备转动: false,
   V形箭头: false,
 }
 
-// 截图模式（?shot=1）：隐藏 GUI 和提示，禁用过渡
+// 截图模式（?shot=1）：隐藏 GUI 和提示
 const isShot = new URLSearchParams(location.search).has('shot')
 if (isShot) {
   gui.hide()
   document.getElementById('hint')!.style.display = 'none'
-  document.getElementById('perm')!.style.display = 'none'
+  document.getElementById('modeBar')!.style.display = 'none'
+  document.getElementById('modeMsg')!.style.display = 'none'
 }
 gui.addColor(guiState, '颜色').onChange((v: string) => {
   ;(navi as any).theme.primary = v
   navi.applyParams()
 })
-gui.add(guiState, '高度', 0.2, 1.5, 0.05).onChange((v: number) => {
+gui.add(guiState, '高度', 0.2, 0.8, 0.05).onChange((v: number) => {
   navi.params.curtainHeight = v
   navi.applyParams()
 })
-gui.add(guiState, '宽度', 0.2, 1.6, 0.05).onChange((v: number) => {
+gui.add(guiState, '宽度', 0.1, 0.8, 0.02).onChange((v: number) => {
   navi.params.curtainWidth = v / 2
   navi.applyParams()
 })
-gui.add(guiState, '透明度', 0.2, 1.2, 0.05).onChange((v: number) => {
+gui.add(guiState, '透明度', 0.15, 0.8, 0.05).onChange((v: number) => {
   navi.params.opacity = v
   navi.applyParams()
 })
-gui.add(guiState, '扫描线', 8, 90, 1).onChange((v: number) => {
+gui.add(guiState, '扫描线', 4, 20, 1).onChange((v: number) => {
   navi.params.scanLines = v
   navi.applyParams()
 })
@@ -118,7 +163,19 @@ gui.add(guiState, 'bloom强度', 0, 2.5, 0.1).onChange((v: number) => {
   navi.params.bloomStrength = v
   navi.applyParams()
 })
-gui.add(guiState, 'V形箭头').onChange((v: boolean) => navi.setChevrons(v))
+gui.add(guiState, '俯仰角', -30, 10, 1).onChange((v: number) => {
+  yawPitch.pitch = THREE.MathUtils.degToRad(v)
+  usingDevice = false // 手动调节时暂停设备朝向
+  applyLook()
+})
+gui.add(guiState, '随设备转动').listen().onChange((v: boolean) => {
+  if (v && rig.supported && !deviceRigStarted) {
+    DeviceOrientationRig.requestPermission().then((ok) => {
+      if (ok) { rig.start((q) => { usingDevice = true; camera.quaternion.copy(q) }); deviceRigStarted = true }
+    })
+  }
+  if (!v) { usingDevice = false; applyLook() }
+})
 gui.add(guiState, 'V形箭头').onChange((v: boolean) => navi.setChevrons(v))
 
 // ---------- 渲染循环（window.__pauseRender 控制截图） ----------
