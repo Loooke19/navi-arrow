@@ -15,9 +15,9 @@ export interface NaviTheme {
 }
 
 export const DEFAULT_THEME: NaviTheme = {
-  primary: '#7FB8FF',
-  highlight: '#B8D9FF',
-  nearOpacity: 0.85,
+  primary: '#8EC5FF',
+  highlight: '#C5E0FF',
+  nearOpacity: 0.75,
   farOpacity: 0.02,
 }
 

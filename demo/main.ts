@@ -77,12 +77,12 @@ btnPhoto.addEventListener('click', exitCameraMode)
 const navi = createNaviArrow(document.getElementById('navi') as HTMLElement, {
   route: [
     [0, 0],       // 脚前，贴地
-    [0, -28],     // 沿当前人行道直行 28m
-    [7, -34],     // 平滑右转（半径 ~8m）
-    [8.5, -44],   // 转入横街
-    [9, -54],     // 继续直行 ~20m
+    [0, -30],     // 沿当前人行道直行 30m（伸到远处楼底附近）
+    [7, -37],     // 平滑右转（半径 ~8m）
+    [8.5, -47],   // 转入横街
+    [9, -57],     // 继续直行 ~20m
   ],
-  curtainHeight: 0.6,
+  curtainHeight: 0.5,
   autoRender: false,
   banner: { distance: '20米后', action: '进入', road: '无名路' },
   footer: { enabled: true, distance: '剩余7.9公里', duration: '1小时47分钟' },
@@ -93,7 +93,7 @@ navi.onFooterButton((act) => {
 })
 
 // ---------- 地平线校准（REDO3 核心） ----------
-// 街景照片（828×1054）：车道线与楼底收束在 y≈63%、x≈57%
+// 街景照片（828×1054）：车道线与楼底收束在图像 y≈63%、x≈57%
 const PHOTO = { horizonY: 0.63, vanishX: 0.57, aspect: 828 / 1054 }
 navi.setPhotoAspect(PHOTO.aspect)
 const pitchDeg = navi.setHorizonCalibration({ horizonY: PHOTO.horizonY, vanishX: PHOTO.vanishX, eyeHeight: 1.6 })

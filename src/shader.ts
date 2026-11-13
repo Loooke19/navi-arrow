@@ -43,19 +43,24 @@ const frag = /* glsl */ `
   varying vec3 vWorldNormal;
   varying float vDist;
 
+  // 基于弧长 u 的确定性伪随机（不规则扫描线用）
+  float hash(float n) { return fract(sin(n * 127.1) * 43758.5453); }
+
   void main() {
     // 距离渐隐（~60m 完全淡出）
     float distFade = 1.0 - smoothstep(18.0, 60.0, vDist);
+    // 近处 2~3m 淡入：避免脚下出现深色斑块
+    float nearFade = smoothstep(0.4, 3.0, vDist);
 
     float a;
     if (uIsGround > 0.5) {
       // 地面光晕：横向羽化（中心亮、两缘透明）+ 纵向沿路渐弱
       float feather = smoothstep(0.0, 0.42, vUv.y) * smoothstep(1.0, 0.58, vUv.y);
-      a = feather * mix(0.5, 0.05, vUv.x) * distFade * uOpacity;
+      a = feather * mix(0.42, 0.05, vUv.x) * distFade * nearFade * uOpacity;
       // 流动光沿前进方向
       float flow = fract(vUv.x - uTime / uFlowSpeed);
       float band = smoothstep(0.0, 0.1, flow) * smoothstep(0.3, 0.12, flow);
-      a += band * feather * 0.25 * distFade * uOpacity;
+      a += band * feather * 0.22 * distFade * nearFade * uOpacity;
       vec3 col = uColor;
       gl_FragColor = vec4(col, clamp(a, 0.0, 1.0));
       if (gl_FragColor.a < 0.004) discard;
@@ -66,8 +71,13 @@ const frag = /* glsl */ `
     float vertGrad = mix(0.15, 0.45, pow(vUv.y, 1.1));
     vertGrad *= smoothstep(0.0, 0.12, vUv.y);
 
-    // 水平扫描线（8~14 条覆盖光帘高度，高对比清晰）
-    float scan = 0.62 + 0.38 * step(0.5, fract(vUv.y * uScanLines - uTime * 0.12));
+    // 不规则扫描线：每条线的位置/亮度由 hash 抖动，缓慢向上漂移
+    float lineIdx = floor(vUv.y * uScanLines);
+    float jitter = (hash(lineIdx) - 0.5) * 0.55;             // 间距抖动
+    float brightJitter = 0.55 + 0.45 * hash(lineIdx + 7.3);  // 亮度抖动
+    float sy = vUv.y * uScanLines + lineIdx * jitter + uTime * 0.06; // 向上慢漂
+    float scan = (0.62 + 0.38 * step(0.5, fract(sy))) * brightJitter;
+    scan = clamp(scan, 0.0, 1.0);
 
     // 菲涅尔边缘光（薄纱转角处微亮）
     vec3 viewDir = normalize(cameraPosition - vWorldPos);
@@ -79,11 +89,11 @@ const frag = /* glsl */ `
     float band = smoothstep(0.0, 0.1, flow) * smoothstep(0.3, 0.12, flow);
     band *= step(0.999, uReveal);
 
-    a = vertGrad * scan * distFade * uOpacity;
-    a += fres * 0.14 * distFade * uOpacity * smoothstep(0.0, 0.15, vUv.y);
-    a += band * 0.28 * distFade * uOpacity;
+    a = vertGrad * scan * distFade * nearFade * uOpacity;
+    a += fres * 0.14 * distFade * nearFade * uOpacity * smoothstep(0.0, 0.15, vUv.y);
+    a += band * 0.28 * distFade * nearFade * uOpacity;
     // 顶沿衔接亮线
-    a += smoothstep(0.93, 1.0, vUv.y) * 0.22 * distFade * uOpacity;
+    a += smoothstep(0.93, 1.0, vUv.y) * 0.22 * distFade * nearFade * uOpacity;
 
     vec3 col = mix(uColor, uTopColor, smoothstep(0.6, 1.0, vUv.y) * 0.6 + band * 0.3);
     gl_FragColor = vec4(col * (1.0 + band * 0.5 + fres * 0.3), clamp(a, 0.0, 1.0));

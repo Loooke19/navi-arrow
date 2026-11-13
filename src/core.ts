@@ -235,7 +235,7 @@ export class NaviArrowCore {
       flowSpeed: options.flowSpeed ?? 2.5,
       scanLines: 12,
       bloomStrength: 0.5,
-      glowWidth: 1.2,
+      glowWidth: 0.8,
     }
     /** 地平线校准：背景图地平线（0..1 高度）与消失点 x（0..1 宽度） */
     this.horizon = { horizonY: 0.45, vanishX: 0.5, pitchDeg: -10, enabled: false }
@@ -482,19 +482,20 @@ export class NaviArrowCore {
 
   private photoAspect = 0
 
-  /** 把照片坐标的 y（0..1）换算到视口坐标 y（0..1），处理 object-fit:cover 上下裁剪 */
+  /** 把照片坐标的 y（0..1）换算到视口坐标 y（0..1），处理 object-fit:cover 裁剪 */
   private photoToViewportY(photoY: number): number {
     if (!this.photoAspect) return photoY // 未知则假定无裁剪
     const vw = this.container.clientWidth || 1
     const vh = this.container.clientHeight || 1
     const viewportAspect = vw / vh
-    if (viewportAspect <= this.photoAspect) {
-      // 视口更「竖」：图按宽度铺满，上下裁剪
-      const visibleFraction = viewportAspect / this.photoAspect // 可见高度占整图比例
+    // cover 缩放 = max(vw/iw, vh/ih)。
+    // viewportAspect < photoAspect：视口相对更「竖」→ 图按高度铺满、左右裁剪 → y 不变
+    // viewportAspect > photoAspect：视口相对更「横」→ 图按宽度铺满、上下裁剪 → y 需映射
+    if (viewportAspect > this.photoAspect) {
+      const visibleFraction = this.photoAspect / viewportAspect // 可见高度占整图比例
       const top = (1 - visibleFraction) / 2
       return (photoY - top) / visibleFraction
     }
-    // 视口更「横」：图按高度铺满，左右裁剪，y 不变
     return photoY
   }
 
@@ -504,10 +505,11 @@ export class NaviArrowCore {
     const vw = this.container.clientWidth || 1
     const vh = this.container.clientHeight || 1
     const viewportAspect = vw / vh
-    if (viewportAspect > this.photoAspect) {
-      const visibleFraction = this.photoAspect / viewportAspect
+    if (viewportAspect < this.photoAspect) {
+      // 图按高度铺满、左右裁剪
+      const visibleFraction = viewportAspect / this.photoAspect
       const left = (1 - visibleFraction) / 2
-      return (viewportX * (1 / viewportAspect) * 0 + left + viewportX * visibleFraction)
+      return left + viewportX * visibleFraction
     }
     return viewportX
   }
