@@ -6,7 +6,7 @@
  */
 import { describe, it, expect } from 'vitest'
 import * as THREE from 'three'
-import { normalizeRoute, buildRouteGeometry, buildCurtainGeometry } from '../src/route'
+import { normalizeRoute, buildRouteGeometry, buildRailGeometry } from '../src/route'
 
 // 与 demo/main.ts 保持一致的配置
 const PHOTO = { horizonY: 0.63, vanishX: 0.57, aspect: 828 / 1054 } // 图像坐标
@@ -91,12 +91,12 @@ describe('REDO4 地平线校准（真实屏幕像素）', () => {
     })
   }
 
-  it('光幕几何为单一 ribbon：每采样点 2 顶点，全部 y 在 0..height', () => {
+  it('边缘光幕几何为低矮 ribbon：每采样点 2 顶点，全部 y 在 0..railHeight', () => {
     const route = [[0, 0], [0, -30], [7, -37], [8.5, -47], [9, -57]] as Array<[number, number]>
     const geo = buildRouteGeometry(normalizeRoute(route))
-    const h = 0.5
-    const curtain = buildCurtainGeometry(geo, h)
-    const pos = curtain.getAttribute('position') as THREE.BufferAttribute
+    const h = 0.25
+    const rail = buildRailGeometry(geo, 0.6, h, -1)
+    const pos = rail.getAttribute('position') as THREE.BufferAttribute
     expect(pos.count).toBe(geo.points.length * 2)
     const ys: number[] = []
     for (let i = 0; i < pos.count; i++) ys.push(pos.getY(i))

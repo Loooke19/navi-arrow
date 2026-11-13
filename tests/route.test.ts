@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import * as THREE from 'three'
-import { normalizeRoute, buildRouteGeometry, buildCurtainGeometry, buildTopLinePoints, buildGroundGlowGeometry, pointAtDistance } from '../src/route'
+import { normalizeRoute, buildRouteGeometry, buildBandGeometry, buildEdgeLinePoints, buildRailGeometry, pointAtDistance } from '../src/route'
 
 const route = [
   [0, 0],
@@ -33,34 +33,41 @@ describe('route geometry', () => {
     expect(g.lengths[0]).toBe(0)
   })
 
-  it('光幕几何：单张 ribbon（每点 2 顶点），底 y=0 顶 y=height，uv.y 0~1', () => {
+  it('地面带几何：贴地 y=0，宽度 = 2*halfWidth，uv.y 0~1', () => {
     const g = buildRouteGeometry(normalizeRoute(route), 12)
-    const height = 0.5
-    const geo = buildCurtainGeometry(g, height)
+    const halfW = 0.6
+    const geo = buildBandGeometry(g, halfW)
     const pos = geo.getAttribute('position') as THREE.BufferAttribute
     expect(pos.count).toBe(g.points.length * 2)
-    const ys: number[] = []
-    for (let i = 0; i < pos.count; i++) ys.push(pos.getY(i))
-    expect(Math.min(...ys)).toBeCloseTo(0, 5)
-    expect(Math.max(...ys)).toBeCloseTo(height, 5)
+    for (let i = 0; i < pos.count; i++) expect(pos.getY(i)).toBeCloseTo(0, 5)
+    // 每两点之间的横向距离应为 bandWidth
+    const w0 = Math.hypot(pos.getX(0) - pos.getX(1), pos.getZ(0) - pos.getZ(1))
+    expect(w0).toBeCloseTo(halfW * 2, 4)
     const uv = geo.getAttribute('uv') as THREE.BufferAttribute
-    let minV = 1, maxV = 0
-    for (let i = 1; i < uv.count * 2; i += 2) {
-      minV = Math.min(minV, uv.array[i])
-      maxV = Math.max(maxV, uv.array[i])
-    }
-    expect(minV).toBe(0)
-    expect(maxV).toBe(1)
-    // 单张 ribbon：每段 2 三角形 = 6 索引
+    expect(uv.array[1]).toBe(0)
+    expect(uv.array[3]).toBe(1)
     expect(geo.index!.count).toBe((g.points.length - 1) * 6)
   })
 
-  it('顶边折线点 + 地面光晕几何有效', () => {
+  it('边缘光幕：两条边线 + 两侧低矮光幕，高度 0..railHeight', () => {
     const g = buildRouteGeometry(normalizeRoute(route), 8)
-    const topPts = buildTopLinePoints(g)
-    expect(topPts.length).toBe(g.points.length)
-    const ground = buildGroundGlowGeometry(g)
-    expect((ground.getAttribute('position') as THREE.BufferAttribute).count).toBe(g.points.length * 2)
+    const [left, right] = buildEdgeLinePoints(g, 0.6)
+    expect(left.length).toBe(g.points.length)
+    expect(right.length).toBe(g.points.length)
+    // 左右两侧应相距 bandWidth
+    const gap = Math.hypot(left[0].x - right[0].x, left[0].z - right[0].z)
+    expect(gap).toBeCloseTo(1.2, 4)
+
+    const h = 0.25
+    for (const side of [-1, 1] as const) {
+      const rail = buildRailGeometry(g, 0.6, h, side)
+      const pos = rail.getAttribute('position') as THREE.BufferAttribute
+      expect(pos.count).toBe(g.points.length * 2)
+      const ys: number[] = []
+      for (let i = 0; i < pos.count; i++) ys.push(pos.getY(i))
+      expect(Math.min(...ys)).toBeCloseTo(0, 5)
+      expect(Math.max(...ys)).toBeCloseTo(h, 5)
+    }
   })
 
   it('pointAtDistance 沿线取样并夹在范围内', () => {

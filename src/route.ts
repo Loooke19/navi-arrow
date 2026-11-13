@@ -1,24 +1,24 @@
 /**
- * 路线几何（REDO3）：
- * - CatmullRomCurve3 平滑 + 弧长等距采样（所有点 y=0 贴地）
- * - 光幕 Curtain：沿中心线的单一竖直 ribbon（DoubleSide 一张薄纱）
- * - 顶边亮线：Line2/LineMaterial 屏幕空间细线（近 2px 远细）
- * - 地面光晕：贴地 ~1m 宽羽化发光带
+ * 路线几何（REDO5）：
+ * - 地面带（BAND）：1.2m 宽贴地半透明发光面，带 uv（沿路距 & 横向）
+ * - 两条亮边线折线（供 Line2 屏幕空间 2px 亮线）
+ * - 两条低矮边缘光幕（Rails）：站在带的两侧，高度 0.25m，α 顶 0.5 → 底 0.05
+ * - 平面滑动 V 形箭头（在带内滑行）
  */
 import * as THREE from 'three'
 
 export interface RouteGeometry {
   curve: THREE.CatmullRomCurve3
-  /** 等距采样点（贴地，y=0） */
+  /** 等距采样点（贴地 y=0） */
   points: THREE.Vector3[]
-  /** 抬高到光幕顶边的采样点 */
-  topPoints: THREE.Vector3[]
+  /** 每个采样点的水平侧向量（左正右负） */
+  sides: THREE.Vector3[]
   /** 累计弧长 */
   lengths: number[]
   total: number
 }
 
-/** 归一化输入路线为 Vector3 数组。形式：[x,z] / [x,y,z] / {x,y,z}，强制 y=0 贴地 */
+/** 归一化输入路线为 Vector3 数组（强制 y=0 贴地）。形式：[x,z] / [x,y,z] / {x,y,z} */
 export function normalizeRoute(route: any): THREE.Vector3[] {
   const pts: any[] = Array.isArray(route) ? route : route?.points ?? []
   if (!pts || pts.length < 2) throw new Error('[navi-arrow] route 至少需要 2 个点')
@@ -31,88 +31,42 @@ export function normalizeRoute(route: any): THREE.Vector3[] {
   })
 }
 
-/** 平滑 + 按弧长等距采样（全部贴地 y=0） */
-export function buildRouteGeometry(rawPoints: THREE.Vector3[], samplesPerMeter = 4, height = 0.5): RouteGeometry {
+/** 平滑 + 按弧长等距采样（全部贴地 y=0），并预计算每点侧向量 */
+export function buildRouteGeometry(rawPoints: THREE.Vector3[], samplesPerMeter = 3): RouteGeometry {
   const curve = new THREE.CatmullRomCurve3(rawPoints, false, 'catmullrom', 0.4)
   const total = curve.getLength()
-  const count = Math.max(16, Math.ceil(total * samplesPerMeter) + 1)
+  const count = Math.max(20, Math.ceil(total * samplesPerMeter) + 1)
   const points = curve.getSpacedPoints(count - 1).map((p) => new THREE.Vector3(p.x, 0, p.z))
   const lengths: number[] = points.map((_, i) => (total * i) / (count - 1))
-  const topPoints = points.map((p) => new THREE.Vector3(p.x, height, p.z))
-  return { curve, points, topPoints, lengths, total }
-}
-
-/**
- * 光幕几何（REDO3）：沿路线中心线的单一竖直 ribbon。
- * 每个采样点 2 个顶点（底 y=0、顶 y=height），DoubleSide 一张薄纱，不再是两片侧墙。
- * uv.x = 弧长归一化（0 近 → 1 远），uv.y = 高度（0 底 → 1 顶）。
- */
-export function buildCurtainGeometry(
-  geo: RouteGeometry,
-  height: number,
-  _halfWidth = 0,
-): THREE.BufferGeometry {
-  const pts = geo.points
-  const n = pts.length
-  const positions = new Float32Array(n * 2 * 3)
-  const uvs = new Float32Array(n * 2 * 2)
-  const indices: number[] = []
-
-  for (let i = 0; i < n; i++) {
-    const p = pts[i]
-    const u = geo.lengths[i] / (geo.total || 1)
-    positions[i * 6 + 0] = p.x
-    positions[i * 6 + 1] = 0
-    positions[i * 6 + 2] = p.z
-    positions[i * 6 + 3] = p.x
-    positions[i * 6 + 4] = height
-    positions[i * 6 + 5] = p.z
-    uvs[i * 4 + 0] = u; uvs[i * 4 + 1] = 0
-    uvs[i * 4 + 2] = u; uvs[i * 4 + 3] = 1
-    if (i < n - 1) {
-      const a = i * 2, b = a + 1, c = (i + 1) * 2, d = c + 1
-      indices.push(a, c, b, b, c, d)
-    }
-  }
-
-  const g = new THREE.BufferGeometry()
-  g.setAttribute('position', new THREE.BufferAttribute(positions, 3))
-  g.setAttribute('uv', new THREE.BufferAttribute(uvs, 2))
-  g.setIndex(indices)
-  g.computeVertexNormals()
-  return g
-}
-
-/** 顶边折线点（供 Line2 屏幕空间细线使用） */
-export function buildTopLinePoints(geo: RouteGeometry): THREE.Vector3[] {
-  return geo.topPoints
-}
-
-/**
- * 地面光晕：贴地 ~1m 宽发光带，边缘羽化（uv.y 0..1 横跨宽度，中心亮边缘透明）。
- * uv.x = 弧长归一化，uv.y = 0(左缘) ~ 0.5(中心) ~ 1(右缘)。
- */
-export function buildGroundGlowGeometry(geo: RouteGeometry, halfWidth = 0.5): THREE.BufferGeometry {
-  const pts = geo.points
-  const n = pts.length
-  const positions = new Float32Array(n * 2 * 3)
-  const uvs = new Float32Array(n * 2 * 2)
-  const indices: number[] = []
   const up = new THREE.Vector3(0, 1, 0)
-  for (let i = 0; i < n; i++) {
-    const p = pts[i]
-    const t = i < n - 1 ? pts[i + 1].clone().sub(p) : p.clone().sub(pts[i - 1])
+  const sides = points.map((p, i) => {
+    const t = i < points.length - 1 ? points[i + 1].clone().sub(p) : p.clone().sub(points[i - 1])
     t.y = 0
     if (t.lengthSq() < 1e-10) t.set(1, 0, 0)
-    t.normalize()
-    const side = new THREE.Vector3().crossVectors(up, t).normalize().multiplyScalar(halfWidth)
+    return new THREE.Vector3().crossVectors(up, t.normalize()).normalize()
+  })
+  return { curve, points, sides, lengths, total }
+}
+
+/**
+ * 地面带几何：沿路线中心线左右各扩张 halfWidth，贴地 y=0。
+ * uv.x = 弧长归一化（0 近 → 1 远），uv.y = 0(左缘) ~ 1(右缘)。
+ */
+export function buildBandGeometry(geo: RouteGeometry, halfWidth: number): THREE.BufferGeometry {
+  const n = geo.points.length
+  const positions = new Float32Array(n * 2 * 3)
+  const uvs = new Float32Array(n * 2 * 2)
+  const indices: number[] = []
+  for (let i = 0; i < n; i++) {
+    const p = geo.points[i]
+    const s = geo.sides[i]
     const u = geo.lengths[i] / (geo.total || 1)
-    positions[i * 6 + 0] = p.x - side.x
-    positions[i * 6 + 1] = 0.005
-    positions[i * 6 + 2] = p.z - side.z
-    positions[i * 6 + 3] = p.x + side.x
-    positions[i * 6 + 4] = 0.005
-    positions[i * 6 + 5] = p.z + side.z
+    positions[i * 6 + 0] = p.x - s.x * halfWidth
+    positions[i * 6 + 1] = 0
+    positions[i * 6 + 2] = p.z - s.z * halfWidth
+    positions[i * 6 + 3] = p.x + s.x * halfWidth
+    positions[i * 6 + 4] = 0
+    positions[i * 6 + 5] = p.z + s.z * halfWidth
     uvs[i * 4 + 0] = u; uvs[i * 4 + 1] = 0
     uvs[i * 4 + 2] = u; uvs[i * 4 + 3] = 1
     if (i < n - 1) {
@@ -128,7 +82,58 @@ export function buildGroundGlowGeometry(geo: RouteGeometry, halfWidth = 0.5): TH
   return g
 }
 
-/** 从平滑曲线上按里程取点（用于箭头摆放） */
+/** 两条边线折线点（左缘、右缘），供 Line2 屏幕空间亮线 */
+export function buildEdgeLinePoints(geo: RouteGeometry, halfWidth: number): [THREE.Vector3[], THREE.Vector3[]] {
+  const left: THREE.Vector3[] = []
+  const right: THREE.Vector3[] = []
+  for (let i = 0; i < geo.points.length; i++) {
+    const p = geo.points[i]
+    const s = geo.sides[i]
+    left.push(new THREE.Vector3(p.x - s.x * halfWidth, 0.012, p.z - s.z * halfWidth))
+    right.push(new THREE.Vector3(p.x + s.x * halfWidth, 0.012, p.z + s.z * halfWidth))
+  }
+  return [left, right]
+}
+
+/**
+ * 低矮边缘光幕：站在地面带两侧，沿中心线竖直升起 height。
+ * 每个采样点 2 顶点（底 0、顶 height），uv.y = 0 底 ~ 1 顶。
+ * 若 side = -1 取左缘，+1 取右缘。
+ */
+export function buildRailGeometry(
+  geo: RouteGeometry,
+  halfWidth: number,
+  height: number,
+  side: -1 | 1,
+): THREE.BufferGeometry {
+  const n = geo.points.length
+  const positions = new Float32Array(n * 2 * 3)
+  const uvs = new Float32Array(n * 2 * 2)
+  const indices: number[] = []
+  for (let i = 0; i < n; i++) {
+    const p = geo.points[i]
+    const s = geo.sides[i]
+    const x = p.x + side * s.x * halfWidth
+    const z = p.z + side * s.z * halfWidth
+    const u = geo.lengths[i] / (geo.total || 1)
+    positions[i * 6 + 0] = x; positions[i * 6 + 1] = 0; positions[i * 6 + 2] = z
+    positions[i * 6 + 3] = x; positions[i * 6 + 4] = height; positions[i * 6 + 5] = z
+    uvs[i * 4 + 0] = u; uvs[i * 4 + 1] = 0
+    uvs[i * 4 + 2] = u; uvs[i * 4 + 3] = 1
+    if (i < n - 1) {
+      const a = i * 2, b = a + 1, c = (i + 1) * 2, d = c + 1
+      indices.push(a, c, b, b, c, d)
+    }
+  }
+  const g = new THREE.BufferGeometry()
+  g.setAttribute('position', new THREE.BufferAttribute(positions, 3))
+  g.setAttribute('uv', new THREE.BufferAttribute(uvs, 2))
+  g.setIndex(indices)
+  g.computeVertexNormals()
+  return g
+}
+
+/** 从平滑曲线上按里程取点 */
 export function pointAtDistance(geo: RouteGeometry, dist: number): THREE.Vector3 {
   const t = Math.min(1, Math.max(0, dist / (geo.total || 1)))
   const idx = t * (geo.points.length - 1)
@@ -139,10 +144,7 @@ export function pointAtDistance(geo: RouteGeometry, dist: number): THREE.Vector3
   return a.clone().lerp(b, f)
 }
 
-/**
- * 地面网格调试几何（REDO3）：1m 网格线（y=0）延伸到 80m + 地平线远点。
- * 返回线段点对列表（LineSegments 用）。
- */
+/** 地面网格调试几何（1m 网格延伸到 extent 米） */
 export function buildGroundGridSegments(extent = 80, step = 1): Array<[THREE.Vector3, THREE.Vector3]> {
   const segs: Array<[THREE.Vector3, THREE.Vector3]> = []
   for (let z = -extent; z <= 0; z += step) {

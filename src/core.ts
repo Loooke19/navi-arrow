@@ -20,14 +20,14 @@ import {
 import {
   normalizeRoute,
   buildRouteGeometry,
-  buildCurtainGeometry,
-  buildTopLinePoints,
-  buildGroundGlowGeometry,
+  buildBandGeometry,
+  buildEdgeLinePoints,
+  buildRailGeometry,
   buildGroundGridSegments,
   pointAtDistance,
   type RouteGeometry,
 } from './route'
-import { createCurtainMaterial } from './shader'
+import { createBandMaterial, createRailMaterial } from './shader'
 
 const css = String.raw
 
@@ -179,13 +179,14 @@ function renderIcon(name: 'exit' | 'map'): string {
 const TURN_ICON = `<svg class="na-arrow-icon" viewBox="0 0 24 24" fill="#ffffff"><path d="M13.5 4 20 9.5 13.5 15v-4.2c-3.6.4-6 2.4-6 6.7v2h-3v-2c0-6 4-9.3 9-9.8V4z"/></svg>`
 
 export interface NaviArrowParams {
-  curtainHeight: number
+  /** 地面带宽度（米，GUI 0.6~2.0） */
+  bandWidth: number
+  /** 边缘光幕高度（米，GUI 0~0.6） */
+  railHeight: number
   opacity: number
   flowSpeed: number
   scanLines: number
   bloomStrength: number
-  /** 地面光晕全宽（米） */
-  glowWidth: number
 }
 
 export class NaviArrowCore {
@@ -201,6 +202,14 @@ export class NaviArrowCore {
   private alphaPass?: ShaderPass
   private curtainMesh?: THREE.Mesh
   private curtainMat?: THREE.ShaderMaterial
+  private chevronMat?: THREE.MeshBasicMaterial
+  private bandMesh?: THREE.Mesh
+  private bandMat?: THREE.ShaderMaterial
+  private edgeLines: Line2[] = []
+  private edgeMat?: LineMaterial
+  private railMesh: THREE.Mesh[] = []
+  private railMat?: THREE.ShaderMaterial
+  private lastBuilt = { bandWidth: 1.2, railHeight: 0.25 }
   private topLine?: Line2
   private topLineMat?: LineMaterial
   private groundMesh?: THREE.Mesh
@@ -230,13 +239,14 @@ export class NaviArrowCore {
     this.opts = mergeOptions({ autoRender: true, visible: true }, options) as any
     this.theme = { ...DEFAULT_THEME, ...(options.theme ?? {}) }
     this.params = {
-      curtainHeight: options.curtainHeight ?? 0.5,
+      bandWidth: options.curtainWidth ?? 1.2,
+      railHeight: options.curtainHeight ?? 0.25,
       opacity: this.theme.nearOpacity,
       flowSpeed: options.flowSpeed ?? 2.5,
       scanLines: 12,
       bloomStrength: 0.5,
-      glowWidth: 0.8,
     }
+    this.lastBuilt = { bandWidth: this.params.bandWidth, railHeight: this.params.railHeight }
     /** 地平线校准：背景图地平线（0..1 高度）与消失点 x（0..1 宽度） */
     this.horizon = { horizonY: 0.45, vanishX: 0.5, pitchDeg: -10, enabled: false }
 
@@ -285,7 +295,7 @@ export class NaviArrowCore {
     this.renderer.setSize(w, h, false)
     this.composer?.setSize(w, h)
     this.bloomPass?.setSize(w / 2, h / 2)
-    this.topLineMat?.resolution.set(w, h)
+    this.edgeMat?.resolution.set(w, h)
     this.camera.aspect = w / h
     this.camera.updateProjectionMatrix()
   }
@@ -351,99 +361,98 @@ export class NaviArrowCore {
   /** 设置/替换路线（局部坐标：米，y 向上） */
   setRoute(route: NonNullable<NaviArrowOptions['route']>) {
     const raw = normalizeRoute(route)
-    this.routeGeo = buildRouteGeometry(raw, 4, this.params.curtainHeight)
+    this.routeGeo = buildRouteGeometry(raw)
     this.rebuildCurtain()
-    if (this.opts.showChevrons) this.rebuildChevrons()
   }
 
   private rebuildCurtain() {
     if (!this.routeGeo) return
-    // 1. 光幕
-    if (this.curtainMesh) {
-      this.scene.remove(this.curtainMesh)
-      this.curtainMesh.geometry.dispose()
+    const halfW = this.params.bandWidth / 2
+
+    // 1. 地面带（加法发光、横向羽化）
+    if (this.bandMesh) {
+      this.scene.remove(this.bandMesh)
+      this.bandMesh.geometry.dispose()
     }
-    if (!this.curtainMat) {
-      this.curtainMat = createCurtainMaterial({
+    if (!this.bandMat) {
+      this.bandMat = createBandMaterial({
         color: this.theme.primary,
-        topColor: this.theme.highlight,
+        farColor: this.theme.highlight,
         opacity: this.params.opacity,
         flowSpeed: this.params.flowSpeed,
         scanLines: this.params.scanLines,
       })
     }
-    const geo = buildCurtainGeometry(this.routeGeo, this.params.curtainHeight)
-    this.curtainMesh = new THREE.Mesh(geo, this.curtainMat)
-    this.curtainMesh.frustumCulled = false
-    this.scene.add(this.curtainMesh)
+    this.bandMesh = new THREE.Mesh(buildBandGeometry(this.routeGeo, halfW), this.bandMat)
+    this.bandMesh.frustumCulled = false
+    this.scene.add(this.bandMesh)
 
-    // 2. 顶边亮线（Line2 屏幕空间细线：近 ~2px，远更细）
-    if (this.topLine) {
-      this.scene.remove(this.topLine)
-      this.topLine.geometry.dispose()
-    }
-    if (!this.topLineMat) {
-      this.topLineMat = new LineMaterial({
+    // 2. 两条亮边线（Line2 屏幕空间 ~2px）
+    if (!this.edgeMat) {
+      this.edgeMat = new LineMaterial({
         color: new THREE.Color(this.theme.highlight),
-        linewidth: 2, // 屏幕像素（worldUnits=false）
+        linewidth: 2,
         transparent: true,
-        opacity: 0.9,
+        opacity: 0.95,
         depthWrite: false,
         blending: THREE.AdditiveBlending,
       })
     }
-    const lineGeo = new LineGeometry()
-    const pts = buildTopLinePoints(this.routeGeo)
-    lineGeo.setPositions(pts.flatMap((p) => [p.x, p.y, p.z]))
-    this.topLine = new Line2(lineGeo, this.topLineMat)
-    this.topLine.frustumCulled = false
-    this.scene.add(this.topLine)
+    this.edgeLines.forEach((l) => {
+      this.scene.remove(l)
+      l.geometry.dispose()
+    })
+    this.edgeLines = buildEdgeLinePoints(this.routeGeo, halfW).map((pts) => {
+      const lg = new LineGeometry()
+      lg.setPositions(pts.flatMap((p) => [p.x, p.y, p.z]))
+      const line = new Line2(lg, this.edgeMat)
+      line.frustumCulled = false
+      this.scene.add(line)
+      return line
+    })
 
-    // 3. 地面光晕（~1m 宽、羽化边缘、低 α）
-    if (this.groundMesh) {
-      this.scene.remove(this.groundMesh)
-      this.groundMesh.geometry.dispose()
-    }
-    if (!this.groundMat) {
-      this.groundMat = createCurtainMaterial({
+    // 3. 两条低矮边缘光幕
+    this.railMesh.forEach((m) => {
+      this.scene.remove(m)
+      m.geometry.dispose()
+    })
+    if (!this.railMat) {
+      this.railMat = createRailMaterial({
         color: this.theme.primary,
-        topColor: this.theme.highlight,
+        farColor: this.theme.highlight,
         opacity: this.params.opacity,
         flowSpeed: this.params.flowSpeed,
-        scanLines: 6,
-        isGround: true,
       })
     }
-    this.groundMesh = new THREE.Mesh(buildGroundGlowGeometry(this.routeGeo, this.params.glowWidth / 2), this.groundMat)
-    this.groundMesh.frustumCulled = false
-    this.scene.add(this.groundMesh)
+    this.railMesh = ([-1, 1] as const).map((side) => {
+      const m = new THREE.Mesh(buildRailGeometry(this.routeGeo!, halfW, this.params.railHeight, side), this.railMat)
+      m.frustumCulled = false
+      this.scene.add(m)
+      return m
+    })
+
+    // 4. 平面滑动 V 形箭头
+    if (this.opts.showChevrons !== false) this.rebuildChevrons()
 
     this.revealStart = this.clock.getElapsedTime()
   }
 
-  /** 应用 params 到材质（lil-gui 实时调参） */
+  /** 应用 params 到材质（lil-gui 实时调参）——只改 uniform，不重建几何（宽高变化才重建） */
   applyParams() {
-    if (this.curtainMat) {
-      this.curtainMat.uniforms.uOpacity.value = this.params.opacity
-      this.curtainMat.uniforms.uFlowSpeed.value = this.params.flowSpeed
-      this.curtainMat.uniforms.uScanLines.value = this.params.scanLines
-      this.curtainMat.uniforms.uColor.value.set(this.theme.primary)
-      this.curtainMat.uniforms.uTopColor.value.set(this.theme.highlight)
+    for (const m of [this.bandMat, this.railMat, this.groundMat]) {
+      if (!m) continue
+      m.uniforms.uOpacity.value = this.params.opacity
+      m.uniforms.uFlowSpeed.value = this.params.flowSpeed
+      m.uniforms.uScanLines.value = this.params.scanLines
+      m.uniforms.uColor.value.set(this.theme.primary)
+      m.uniforms.uFarColor.value.set(this.theme.highlight)
     }
-    if (this.groundMat) {
-      this.groundMat.uniforms.uOpacity.value = this.params.opacity
-      this.groundMat.uniforms.uFlowSpeed.value = this.params.flowSpeed
-      this.groundMat.uniforms.uColor.value.set(this.theme.primary)
-    }
-    if (this.topLineMat) {
-      this.topLineMat.color.set(this.theme.highlight)
-    }
+    if (this.edgeMat) this.edgeMat.color.set(this.theme.highlight)
     if (this.bloomPass) this.bloomPass.strength = this.params.bloomStrength
-    if (this.routeGeo) {
-      // 高度变化需要重建几何
-      if (this.routeGeo.topPoints[0].y !== this.params.curtainHeight) {
-        this.routeGeo.topPoints.forEach((p) => { p.y = this.params.curtainHeight })
-      }
+    // 只有带宽/光幕高度变化才重建几何（可避免每帧重建）
+    if (this.routeGeo && (this.lastBuilt.bandWidth !== this.params.bandWidth || this.lastBuilt.railHeight !== this.params.railHeight)) {
+      this.lastBuilt.bandWidth = this.params.bandWidth
+      this.lastBuilt.railHeight = this.params.railHeight
       this.rebuildCurtain()
     }
   }
@@ -568,6 +577,10 @@ export class NaviArrowCore {
     return { ok, maxAbove, farthestGap: farGapPx, horizonPx, points: screen }
   }
 
+  /**
+   * 平面滑动 V 形箭头（百度风格）：贴地在带内，沿路线平滑前移 + 淡入淡出。
+   * 全部箭头的 Y 位置在 render() 里按时间更新，不重建几何。
+   */
   private rebuildChevrons() {
     if (this.chevronGroup) {
       this.scene.remove(this.chevronGroup)
@@ -581,42 +594,66 @@ export class NaviArrowCore {
     }
     if (!this.routeGeo) return
     const group = new THREE.Group()
-    // V 形：ExtrudeGeometry 挤出带倒角，亮面/暗面用两份材质明度区分
+    // 扁平 V 形（薄挤出，贴地 y≈0.01），带轻微倒角
     const s = new THREE.Shape()
-    const w = 0.38, d = 0.42, t = 0.14
+    const w = 0.3, d = 0.32, t = 0.11
     s.moveTo(-w, 0); s.lineTo(0, d); s.lineTo(w, 0)
     s.lineTo(w - t, 0); s.lineTo(0, d - t * 1.7); s.lineTo(-w + t, 0)
     s.closePath()
     const geo = new THREE.ExtrudeGeometry(s, {
-      depth: 0.05,
+      depth: 0.012,
       bevelEnabled: true,
-      bevelThickness: 0.03,
-      bevelSize: 0.035,
-      bevelSegments: 3,
+      bevelThickness: 0.008,
+      bevelSize: 0.008,
+      bevelSegments: 2,
     })
     geo.rotateX(-Math.PI / 2)
-    geo.translate(0, 0.04, 0)
-    const base = new THREE.Color(this.theme.primary)
-    const bright = base.clone().lerp(new THREE.Color('#ffffff'), 0.25)
-    const dark = base.clone().lerp(new THREE.Color('#000000'), 0.3)
-    for (let i = 0; i < (this.opts.chevronCount ?? 3); i++) {
-      // 亮面/暗面双材质，整体低不透明度（贴地扁平）
-      const mats = [
-        new THREE.MeshBasicMaterial({ color: bright, transparent: true, opacity: 0.35 }),
-        new THREE.MeshBasicMaterial({ color: dark, transparent: true, opacity: 0.3 }),
-      ]
-      const dist = 1.4 + i * 1.3
-      const m = new THREE.Mesh(geo, mats)
-      m.position.copy(pointAtDistance(this.routeGeo, dist))
-      const ahead = pointAtDistance(this.routeGeo, dist + 0.5)
-      m.lookAt(ahead.x, m.position.y, ahead.z)
+    geo.translate(0, 0.012, 0)
+    // 加法混合、浅青 —— 只会提亮
+    const mat = new THREE.MeshBasicMaterial({
+      color: new THREE.Color(this.theme.highlight),
+      transparent: true,
+      opacity: 0.5,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    })
+    this.chevronMat = mat
+    // 3 个箭头，间距 3m（在 render 里滚动）
+    const count = this.opts.chevronCount ?? 3
+    for (let i = 0; i < count; i++) {
+      const m = new THREE.Mesh(geo, mat)
+      m.userData.slot = i
       group.add(m)
     }
     this.chevronGroup = group
+    this.chevronGroup.userData.count = count
     this.scene.add(group)
   }
 
-  /** 切换地面 V 形箭头 */
+  /** 每帧更新箭头位置（沿路线滑行，间距 3m，2.5s 一循环） */
+  private updateChevrons(t: number) {
+    if (!this.chevronGroup || !this.routeGeo) return
+    const count = this.chevronGroup.userData.count as number
+    const spacing = 3
+    const cycle = spacing * count
+    const speed = cycle / 2.5 // m/s，对应 2.5s 一循环
+    this.chevronGroup.children.forEach((m: any, i: number) => {
+      // 从近到远滚动，超出 cycle 后回到起点
+      const base = ((i * spacing + t * speed) % cycle)
+      const dist = 1.5 + base
+      const p = pointAtDistance(this.routeGeo!, dist)
+      const ahead = pointAtDistance(this.routeGeo!, dist + 0.4)
+      m.position.set(p.x, 0.012, p.z)
+      m.lookAt(ahead.x, m.position.y, ahead.z)
+      // 近处/远处两端淡入淡出，避免跳变
+      const fadeIn = Math.min(1, dist / 2.5)
+      const fadeOut = Math.min(1, Math.max(0, (this.routeGeo!.total - dist) / 6))
+      ;(m.material as THREE.MeshBasicMaterial).opacity = 0.5 * fadeIn * fadeOut
+    })
+    void t
+  }
+
+  /** 切换地面 V 形箭头（默认开） */
   setChevrons(enabled: boolean) {
     if (this.opts.showChevrons === enabled) return
     this.opts.showChevrons = enabled
@@ -724,24 +761,13 @@ export class NaviArrowCore {
       ? Math.min(1, (t - this.revealStart) / (this.revealDuration / 1000))
       : 0
     const eased = 1 - Math.pow(1 - reveal, 3) // ease-out
-    for (const m of [this.curtainMat, this.groundMat]) {
+    for (const m of [this.bandMat, this.railMat]) {
       if (m) {
         m.uniforms.uTime.value = t
         m.uniforms.uReveal.value = eased
       }
     }
-    // V 形箭头淡入淡出
-    if (this.chevronGroup) {
-      const period = 3
-      const cycle = 0.85
-      this.chevronGroup.children.forEach((m: any, i: number) => {
-        let phase = ((t / period - i * (cycle / this.opts.chevronCount!)) % cycle)
-        if (phase < 0) phase += cycle
-        const a = phase < 0.15 ? phase / 0.15 : phase > 0.7 ? Math.max(0, 1 - (phase - 0.7) / 0.15) : 1
-        const mats = Array.isArray(m.material) ? m.material : [m.material]
-        mats.forEach((mm: any) => { mm.opacity = 0.35 * a })
-      })
-    }
+    this.updateChevrons(t)
     if (this.composer) this.composer.render()
     else this.renderer.render(this.scene, this.camera)
   }
@@ -756,11 +782,15 @@ export class NaviArrowCore {
       const mats = Array.isArray(o.material) ? o.material : [o.material]
       mats.forEach((m: any) => m?.dispose?.())
     }
-    if (this.curtainMesh) disposeGeoMat(this.curtainMesh)
-    if (this.topLine) disposeGeoMat(this.topLine)
+    if (this.bandMesh) disposeGeoMat(this.bandMesh)
+    this.edgeLines.forEach(disposeGeoMat)
+    this.railMesh.forEach(disposeGeoMat)
     if (this.groundMesh) disposeGeoMat(this.groundMesh)
     if (this.groundGrid) disposeGeoMat(this.groundGrid)
     this.chevronGroup?.children.forEach(disposeGeoMat)
+    this.bandMat?.dispose()
+    this.railMat?.dispose()
+    this.edgeMat?.dispose()
     this.bloomPass?.dispose?.()
     this.composer?.dispose?.()
     this.renderer.dispose()

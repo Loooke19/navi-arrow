@@ -82,7 +82,9 @@ const navi = createNaviArrow(document.getElementById('navi') as HTMLElement, {
     [8.5, -47],   // 转入横街
     [9, -57],     // 继续直行 ~20m
   ],
-  curtainHeight: 0.5,
+  curtainHeight: 0.25,
+  curtainWidth: 1.2,
+  showChevrons: true,
   autoRender: false,
   banner: { distance: '20米后', action: '进入', road: '无名路' },
   footer: { enabled: true, distance: '剩余7.9公里', duration: '1小时47分钟' },
@@ -119,8 +121,9 @@ attachDragLook(document.getElementById('phone')!, (yaw, pitch) => {
 // ---------- lil-gui 调参面板 ----------
 const gui = new GUI({ title: 'navi-arrow 调参' })
 const guiState = {
-  颜色: '#7FB8FF',
-  高度: navi.params.curtainHeight,
+  颜色: '#8EC5FF',
+  带宽: navi.params.bandWidth,
+  边缘光幕高: navi.params.railHeight,
   透明度: navi.params.opacity,
   扫描线: navi.params.scanLines,
   流动速度: navi.params.flowSpeed,
@@ -129,6 +132,7 @@ const guiState = {
   地平线: PHOTO.horizonY,
   地面网格: false,
   随设备转动: false,
+  V形箭头: true,
   V形箭头: false,
 }
 
@@ -153,8 +157,12 @@ gui.addColor(guiState, '颜色').onChange((v: string) => {
   ;(navi as any).theme.primary = v
   navi.applyParams()
 })
-gui.add(guiState, '高度', 0.3, 0.8, 0.05).onChange((v: number) => {
-  navi.params.curtainHeight = v
+gui.add(guiState, '带宽', 0.6, 2.0, 0.05).onChange((v: number) => {
+  navi.params.bandWidth = v
+  navi.applyParams()
+})
+gui.add(guiState, '边缘光幕高', 0, 0.6, 0.05).onChange((v: number) => {
+  navi.params.railHeight = v
   navi.applyParams()
 })
 gui.add(guiState, '透明度', 0.15, 0.8, 0.05).onChange((v: number) => {
