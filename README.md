@@ -2,7 +2,7 @@
 
 可嵌入的 **AR 步行导航引导组件**：视觉 = 大疆 DJI Fly「AR 返航」光幕路线（改为蓝色）+ 百度地图 AR 步导的顶部横幅/底部信息条。
 
-- 光幕（ribbon/curtain）：沿路线竖直挂下的半透明蓝色光幕，顶边亮细描边，带网纹、边缘光、流动亮带、远处渐隐、出现时 600ms ease-out「生长」动画。
+- 光幕（ribbon/curtain）：沿路线竖直挂下的半透明蓝色光幕（自定义 BufferGeometry 立体带状网格 + ShaderMaterial：竖直渐变、细横向扫描线、菲涅尔边缘光、距离渐隐、流动亮带、600ms 生长动画，AdditiveBlending），顶边 TubeGeometry 发光亮线，底部贴地窄光迹，可选 3D 挤出 V 形箭头；EffectComposer + UnrealBloomPass 发光（自定义 alpha 保留 pass 保证透明背景下 bloom 正确）。
 - 顶部横幅：百度风格圆角胶囊，圆形图标位 + 「20米后 进入 无名路」，蓝色渐变半透明毛玻璃、向右渐隐，文字切换上滑淡入，右上角可选「AR设置」按钮。
 - 底部信息条：「剩余7.9公里 1小时47分钟」，左「退出」右「地图」，可配置/隐藏。
 - 技术栈：TypeScript + Three.js（自定义 ShaderMaterial）+ 原生 DOM/CSS（Shadow DOM 隔离）。
@@ -86,8 +86,11 @@ npm install
 npm run dev        # http://localhost:5173
 ```
 
-演示页模拟一条有两个转弯的步行路线，自动播放：直行 → 「20米后 右转 进入 无名路」→ 右转 → 「30米后 左转 进入 永初路」→ 到达。
-摄像头可用时用 `getUserMedia` 当 AR 背景；没有摄像头时显示静态街景占位。真机用 DeviceOrientation 驱动朝向，桌面端按住拖拽模拟转头。支持 `?t=秒` 从脚本中途开始播放。
+演示页默认背景是一张免版权实拍街景照片（`demo/assets/street.jpg`，来源：Unsplash，Unsplash License，可免费商用无需署名）；可点击按钮改用 `getUserMedia` 后置摄像头当 AR 背景。真机用 DeviceOrientation 驱动朝向，桌面端按住拖拽模拟转头。右侧 lil-gui 面板可实时调颜色、光幕高度/宽度/透明度、扫描线密度、流动速度、bloom 强度、V 形箭头开关。支持 `?t=秒` 快进、`?shot=1` 截图模式（隐藏 GUI）。
+
+## 截图对比
+
+`scripts/shot.mjs`（Playwright 无头 Chromium，390×844，WebGL 开启）自动截 demo 存入 `docs/compare/`；`scripts/grid.mjs` 生成与 `reference/dji-frames/f_10.jpg`、`f_31.jpg`、`reference/baidu-banner-ar.png` 的并排对比图 `docs/compare/compare-grid.png`；`scripts/verify.mjs` 验证 60fps 与资源释放。
 
 ## 构建 / 测试
 
@@ -99,7 +102,8 @@ npm test           # Vitest：配置合并、路线几何生成
 ## 目录
 
 - `src/` 核心包（config / route / shader / core / element / react / ar）
-- `demo/` 演示页
+- `demo/` 演示页（含 `assets/street.jpg` 免版权街景背景）
+- `scripts/` Playwright 截图 / 拼图 / 验收脚本
 - `tests/` 单元测试
-- `docs/compare/` 演示页截图（与 reference 素材对比）
+- `docs/compare/` 演示页截图与参考帧并排对比图
 - `reference/` 视觉参考素材（大疆 AR 返航逐帧、百度 AR 步导截图）

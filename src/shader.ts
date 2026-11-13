@@ -1,27 +1,23 @@
 /**
- * 光幕 ShaderMaterial：网纹/扫描线、边缘光（菲涅尔近似）、流动亮带、远处渐隐、生长动画
+ * 光幕 ShaderMaterial（重做版）：
+ * 竖直光帘——顶部最亮往下渐透明、细横向扫描线、菲涅尔边缘光、距离渐隐、流动光、uReveal 生长。
+ * AdditiveBlending / transparent / depthWrite:false / DoubleSide。
  */
 import * as THREE from 'three'
-import type { NaviTheme } from './config'
 
 const vert = /* glsl */ `
-  uniform float uGrow;      // 生长动画 0~1
-  attribute vec3 aBottomPosition;
-  varying float vU;         // 归一化里程 0(近/起点)~1(远)
-  varying float vV;         // 0(底)~1(顶)
+  uniform float uReveal;      // 生长动画 0~1
+  varying vec2 vUv;
   varying vec3 vWorldPos;
   varying vec3 vWorldNormal;
   varying float vDist;
 
   void main() {
-    vU = uv.x;
-    vV = uv.y;
+    vUv = uv;
     vec3 p = position;
-    // 生长：沿里程方向从近到远展开
-    float gate = step(vU, uGrow);
-    p = mix(aBottomPosition, p, gate);
-    // 生长期间高度也压低，形成"展开"感
-    p.y *= mix(0.15, 1.0, clamp(uGrow * 1.6 - vU * 0.6, 0.0, 1.0));
+    // 生长：近处先显现，光帘高度从 0 长到 1（ease-out 由 JS 写入 uReveal）
+    float reveal = clamp(uReveal * 1.25 - vUv.x * 0.25, 0.0, 1.0);
+    p.y *= reveal;
 
     vec4 wp = modelMatrix * vec4(p, 1.0);
     vWorldPos = wp.xyz;
@@ -34,72 +30,85 @@ const vert = /* glsl */ `
 
 const frag = /* glsl */ `
   precision highp float;
-  uniform vec3 uPrimary;
-  uniform vec3 uHighlight;
-  uniform float uNearOpacity;
-  uniform float uFarOpacity;
+  uniform vec3 uColor;
+  uniform vec3 uTopColor;
+  uniform float uOpacity;      // 总体强度
   uniform float uTime;
-  uniform float uFlowSpeed;
-  varying float vU;
-  varying float vV;
+  uniform float uFlowSpeed;    // 流动光周期（秒）
+  uniform float uScanLines;    // 扫描线数量
+  uniform float uReveal;
+  varying vec2 vUv;
   varying vec3 vWorldPos;
   varying vec3 vWorldNormal;
   varying float vDist;
 
   void main() {
-    // 远近渐隐（相机距离 + 里程双重作用）
-    float distFade = 1.0 - clamp(vDist / 90.0, 0.0, 1.0);
-    distFade = pow(distFade, 1.4);
-    float routeFade = 1.0 - smoothstep(0.55, 1.0, vU);
-    float fade = distFade * routeFade;
+    // 距离渐隐（fog 式）
+    float distFade = 1.0 - smoothstep(18.0, 70.0, vDist);
 
-    // 基础半透明填充：底部稍淡、顶部沿顶边更亮
-    float alpha = mix(uNearOpacity, uFarOpacity, vU) * fade;
+    // 竖直渐变：顶部最亮 α≈0.7 → 底部 α≈0.15；底部 15% 内快速衰减避免"地垫"感
+    float vertGrad = mix(0.15, 0.7, pow(vUv.y, 1.15));
+    vertGrad *= smoothstep(0.0, 0.18, vUv.y);
 
-    // 细横向网纹/扫描线（轻微滚动）
-    float lines = 0.5 + 0.5 * sin((vWorldPos.y * 22.0) - uTime * 0.8);
-    lines = mix(0.82, 1.0, lines);
-    alpha *= lines;
+    // 细横向扫描线（固定在线网上，轻微滚动）
+    float scan = 0.78 + 0.22 * step(0.5, fract(vUv.y * uScanLines - uTime * 0.15));
 
-    // 边缘光（菲涅尔近似）：视线与面越平行越亮
+    // 菲涅尔边缘光：视线与面越平行越亮
     vec3 viewDir = normalize(cameraPosition - vWorldPos);
-    float fres = 1.0 - abs(dot(viewDir, vWorldNormal));
-    fres = pow(fres, 2.6);
-    alpha += fres * 0.10 * fade;
+    float ndv = abs(dot(normalize(vWorldNormal), viewDir));
+    float fres = pow(1.0 - ndv, 2.0);
 
-    // 沿前进方向循环流动亮带（2~3 秒一循环）
-    float flow = fract(vU * 3.0 - uTime / uFlowSpeed);
-    float band = smoothstep(0.0, 0.12, flow) * smoothstep(0.36, 0.14, flow);
-    alpha += band * 0.16 * fade;
+    // 流动光：亮带沿 uv.x 往前循环（2.5s 一圈）
+    float flow = fract(vUv.x - uTime / uFlowSpeed);
+    float band = smoothstep(0.0, 0.1, flow) * smoothstep(0.3, 0.12, flow);
+    // 生长中不发流动光
+    band *= step(0.999, uReveal);
 
-    // 顶边更亮更实的描边高光
-    float topEdge = smoothstep(0.88, 0.985, vV);
-    vec3 col = mix(uPrimary, uHighlight, topEdge * 0.85 + fres * 0.3 + band * 0.25);
-    // 顶边处 alpha 拉高成"亮细线"
-    alpha = mix(alpha, min(1.0, alpha * 2.4 + 0.35), topEdge * fade);
+    float a = vertGrad * scan * distFade * uOpacity;
+    a += fres * 0.28 * distFade * uOpacity * smoothstep(0.0, 0.15, vUv.y);
+    a += band * 0.35 * distFade * uOpacity;
+    // 顶沿加重（衔接 TubeGeometry 亮线）
+    a += smoothstep(0.92, 1.0, vUv.y) * 0.25 * distFade * uOpacity;
 
-    gl_FragColor = vec4(col, alpha);
-    if (gl_FragColor.a < 0.003) discard;
+    vec3 col = mix(uColor, uTopColor, smoothstep(0.6, 1.0, vUv.y) * 0.7 + band * 0.3);
+    gl_FragColor = vec4(col * (1.0 + band * 0.8 + fres * 0.4), clamp(a, 0.0, 1.0));
+    if (gl_FragColor.a < 0.004) discard;
   }
 `
 
-export function createCurtainMaterial(theme: NaviTheme, flowSpeed: number): THREE.ShaderMaterial {
-  const primary = new THREE.Color(theme.primary)
-  const highlight = new THREE.Color(theme.highlight).lerp(new THREE.Color('#ffffff'), 0.35)
+export interface CurtainUniforms {
+  uColor: { value: THREE.Color }
+  uTopColor: { value: THREE.Color }
+  uOpacity: { value: number }
+  uTime: { value: number }
+  uFlowSpeed: { value: number }
+  uScanLines: { value: number }
+  uReveal: { value: number }
+}
+
+export function createCurtainMaterial(opts: {
+  color: string
+  topColor: string
+  opacity: number
+  flowSpeed: number
+  scanLines: number
+}): THREE.ShaderMaterial {
+  const uniforms: CurtainUniforms = {
+    uColor: { value: new THREE.Color(opts.color) },
+    uTopColor: { value: new THREE.Color(opts.topColor) },
+    uOpacity: { value: opts.opacity },
+    uTime: { value: 0 },
+    uFlowSpeed: { value: opts.flowSpeed },
+    uScanLines: { value: opts.scanLines },
+    uReveal: { value: 1 },
+  }
   return new THREE.ShaderMaterial({
     vertexShader: vert,
     fragmentShader: frag,
+    uniforms: uniforms as any,
     transparent: true,
     depthWrite: false,
     side: THREE.DoubleSide,
-    uniforms: {
-      uPrimary: { value: primary },
-      uHighlight: { value: highlight },
-      uNearOpacity: { value: theme.nearOpacity },
-      uFarOpacity: { value: theme.farOpacity },
-      uTime: { value: 0 },
-      uFlowSpeed: { value: flowSpeed },
-      uGrow: { value: 1 },
-    },
+    blending: THREE.AdditiveBlending,
   })
 }
