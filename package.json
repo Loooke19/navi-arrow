@@ -1,0 +1,62 @@
+{
+  "name": "navi-arrow",
+  "version": "0.1.0",
+  "description": "AR 步行导航引导组件：DJI Fly 风格蓝色光幕路线 + 百度地图 AR 步导风格 UI",
+  "type": "module",
+  "main": "./dist/navi-arrow.umd.cjs",
+  "module": "./dist/navi-arrow.js",
+  "types": "./dist/types/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/types/index.d.ts",
+      "import": "./dist/navi-arrow.js",
+      "require": "./dist/navi-arrow.umd.cjs"
+    },
+    "./react": {
+      "types": "./dist/types/react.d.ts",
+      "import": "./dist/react.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "dev": "vite",
+    "build": "npm run build:lib && npm run build:demo",
+    "build:lib": "vite build --config vite.lib.config.ts && tsc --project tsconfig.types.json && vite build --config vite.react.config.ts",
+    "build:demo": "vite build",
+    "test": "vitest run",
+    "preview": "vite preview"
+  },
+  "keywords": [
+    "ar",
+    "navigation",
+    "three.js",
+    "walking-navigation"
+  ],
+  "license": "MIT",
+  "peerDependencies": {
+    "react": ">=17",
+    "react-dom": ">=17"
+  },
+  "peerDependenciesMeta": {
+    "react": {
+      "optional": true
+    },
+    "react-dom": {
+      "optional": true
+    }
+  },
+  "dependencies": {
+    "three": "^0.171.0"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.0",
+    "@types/three": "^0.171.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "typescript": "^5.6.0",
+    "vite": "^5.4.0",
+    "vitest": "^2.1.0"
+  }
+}
