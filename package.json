@@ -22,8 +22,8 @@
   ],
   "scripts": {
     "dev": "vite",
-    "dev:https": "vite --host --mode https",
-    "dev:https:strict": "vite --host --config vite.https.config.ts",
+    "dev:https": "vite --config vite.https.config.ts",
+    "dev:https:host": "vite --host --config vite.https.config.ts",
     "build": "npm run build:lib && npm run build:demo",
     "build:lib": "vite build --config vite.lib.config.ts && tsc --project tsconfig.types.json && vite build --config vite.react.config.ts",
     "build:demo": "vite build",

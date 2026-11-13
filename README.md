@@ -92,11 +92,16 @@ npm run dev        # http://localhost:5173
 **手机局域网测试（摄像头必须 HTTPS）：**
 
 ```bash
-npm run dev:https   # 或 dev:https:strict
-# 终端会打印 Network: https://192.168.x.x:5173/
+npm run dev:https:host    # 同时监听局域网，推荐手机调试
+npm run dev:https         # 仅 localhost https（不对外）
+# 终端会打印 Local/Network 地址，例如 https://192.168.x.x:5173/
 ```
 
-手机连同一 Wi-Fi，浏览器打开该 https 地址 → 接受自签名证书警告 → 点「相机实景」授权摄像头。
+两个脚本都用 `vite.https.config.ts`（`@vitejs/plugin-basic-ssl`）签发自签名证书，**都是真的 HTTPS**。`dev:https:host` 额外加 `--host` 才会监听局域网；`dev:https` 只给本机 https（可用 `https://localhost:5173`）。
+
+手机连同一 Wi-Fi，浏览器打开终端打印的 `Network: https://192.168.x.x:5173/` → 接受自签名证书警告 → 点「相机实景」授权摄像头。
+
+> 注意：`npm run dev` 是纯 http，仅本机可用；手机上任何浏览器都不允许 http 页面调用摄像头。
 
 组件本身保持 `background: 'transparent'`（默认）：不渲染任何背景，宿主页面可在 canvas 后面放任意 `<video>`/图片/AR 引擎画面。
 
