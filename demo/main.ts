@@ -82,7 +82,7 @@ const navi = createNaviArrow(document.getElementById('navi') as HTMLElement, {
     [8.5, -47],   // 转入横街
     [9, -57],     // 继续直行 ~20m
   ],
-  curtainHeight: 0.25,
+  curtainHeight: 0.3,
   curtainWidth: 1.2,
   showChevrons: true,
   autoRender: false,
@@ -133,7 +133,6 @@ const guiState = {
   地面网格: false,
   随设备转动: false,
   V形箭头: true,
-  V形箭头: false,
 }
 
 // 截图模式（?shot=1）：隐藏 GUI 和提示
@@ -237,6 +236,9 @@ function frame() {
   }
 }
 frame()
+
+// 调试句柄（截图/测试脚本用）
+;(window as any).__navi = navi
 
 // ---------- 自动播放脚本 ----------
 const t0 = performance.now() - (parseFloat(new URLSearchParams(location.search).get('t') ?? '0') * 1000)

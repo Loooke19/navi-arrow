@@ -7,10 +7,10 @@ const page = await browser.newPage({ viewport: { width: 390, height: 844 } })
 await page.goto('http://localhost:5173/?shot=1')
 await page.waitForTimeout(3000)
 
-// 带光截图（取样路线中段：屏幕中心偏下，光带必经之处）
+// 带光截图（取样路线中段无箭头区：光带必经之处，避开立体箭头）
 await page.evaluate(() => { window.__pauseRender = true })
 await page.waitForTimeout(300)
-const withGlow = PNG.sync.read(await page.screenshot({ clip: { x: 175, y: 560, width: 40, height: 120 } }))
+const withGlow = PNG.sync.read(await page.screenshot({ clip: { x: 180, y: 430, width: 30, height: 60 } }))
 
 // 隐藏组件（只留照片），同区域截图
 await page.evaluate(() => {
@@ -21,7 +21,7 @@ await page.evaluate(() => {
 await page.waitForTimeout(500)
 await page.evaluate(() => { window.__pauseRender = true })
 await page.waitForTimeout(300)
-const noGlow = PNG.sync.read(await page.screenshot({ clip: { x: 175, y: 560, width: 40, height: 120 } }))
+const noGlow = PNG.sync.read(await page.screenshot({ clip: { x: 180, y: 430, width: 30, height: 60 } }))
 
 function luma(png) {
   let sum = 0
