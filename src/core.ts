@@ -206,6 +206,7 @@ export class NaviArrowCore {
   private tintMat?: THREE.ShaderMaterial
   private tintAmount = 0
   private floorGain = 1
+  private slab = 0.075
   private railMesh: THREE.Mesh[] = []
   private railMat?: THREE.ShaderMaterial
   private lastBuilt = { bandWidth: 1.2, railHeight: 0.5 }
@@ -413,7 +414,7 @@ export class NaviArrowCore {
     }
     this.bandMat.uniforms.uFloorGain.value = this.floorGain
     const wallH = Math.min(0.58, Math.max(0.42, this.params.railHeight || 0.5))
-    const channelGeo = buildChannelGeometry(this.routeGeo, halfW, wallH)
+    const channelGeo = buildChannelGeometry(this.routeGeo, halfW, wallH, this.slab)
     if (!this.tintMat) this.tintMat = createFloorTintMaterial(this.theme.primary, this.tintAmount)
     this.tintMesh = new THREE.Mesh(channelGeo, this.tintMat)
     this.tintMesh.frustumCulled = false
@@ -429,6 +430,14 @@ export class NaviArrowCore {
     if (this.opts.showChevrons !== false) this.rebuildChevrons()
 
     this.revealStart = this.clock.getElapsedTime()
+  }
+
+  /** 底板厚度（米）。近端大约 6–10 像素，随距离变薄。 */
+  setSlab(meters: number) {
+    const next = Math.max(0.04, meters)
+    if (Math.abs(next - this.slab) < 1e-4) return
+    this.slab = next
+    if (this.routeGeo) this.rebuildCurtain()
   }
 
   /** 槽底填充倍率。1 是医院现在的亮度，街景用更高的值把路面染青。 */

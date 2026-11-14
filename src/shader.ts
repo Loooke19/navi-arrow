@@ -52,37 +52,36 @@ const frag = /* glsl */ `
   varying float vWall;
 
   void main() {
-    // 沿程只在贴着镜头时淡入，远端仍保持可见。横向另算，不在这里拉平。
-    float fade = mix(1.0, 0.78, smoothstep(0.72, 1.0, vUv.x));
+    // 沿程只在贴着镜头时淡入，远端仍保持可见。
+    float fade = mix(1.0, 0.82, smoothstep(0.72, 1.0, vUv.x));
     fade *= smoothstep(0.35, 1.8, vDist);
     vec3 N = normalize(vNormal);
-    vec3 V = normalize(cameraPosition - vWorldPos);
-    float fres = pow(1.0 - clamp(abs(dot(N, V)), 0.0, 1.0), 1.45);
-    // 横向 u：0 在中线，1 在两侧。中心几乎全透，两边平滑变实。
+    // 宽而缓的横向渐变：中心约 0.18，外缘约 0.65，过渡铺在两侧大约四成宽度上。
     float lat = abs(vUv.y * 2.0 - 1.0);
-    float edge = pow(clamp(lat, 0.0, 1.0), 1.9);
-    float topA = mix(0.04, 0.7, edge);
-    // 侧面和近端切面法线接近水平，整面按边缘的亮度来，比顶面中心亮
-    float sideK = 1.0 - smoothstep(0.22, 0.78, abs(N.y));
-    float sideA = mix(0.58, 0.72, edge);
-    float body = mix(topA, sideA, sideK);
-    body *= fade * uOpacity * mix(1.0, uFloorGain, edge);
-    body *= (0.92 + 0.08 * fres);
-    vec3 col = mix(uColor, uFarColor, clamp(vUv.x * 0.35, 0.0, 1.0));
-
+    float rise = pow(smoothstep(0.15, 1.0, lat), 1.3);
+    float shape = 0.18 + 0.47 * rise;
+    float sideK = 1.0 - smoothstep(0.30, 0.84, abs(N.y));
+    // 侧面和近端切面比顶面更实，但不再叠一条刺眼的轨
+    float cover = mix(shape, 0.78, sideK) * fade * uOpacity;
+    vec3 col = mix(uColor, uFarColor, clamp(vUv.x * 0.22, 0.0, 1.0));
+    // 顶缘细线：很窄、很轻，只勾出轮廓
     float fw = max(fwidth(vRim), 1e-4);
     float px = (1.0 - vRim) / fw;
     float farT = smoothstep(4.0, 40.0, vDist);
-    float corePx = mix(0.85, 0.4, farT);
+    float corePx = mix(0.5, 0.26, farT);
     float line = exp(-0.5 * (px / corePx) * (px / corePx));
-    line *= smoothstep(0.62, 0.98, vRim);
-    float lineI = line * 0.36 * fade * uOpacity;
-    vec3 lineCol = vec3(0.40, 0.94, 1.0);
-
-    float a = body + lineI;
-    if (a < 0.004) discard;
-    vec3 added = col * body + lineCol * lineI;
-    gl_FragColor = vec4(added / max(a, 1e-4), clamp(a, 0.0, 1.0));
+    line *= smoothstep(0.84, 0.99, vRim);
+    float lineI = line * 0.035 * fade * uOpacity * (1.0 - sideK);
+    vec3 lineCol = vec3(0.55, 0.88, 0.98);
+    // 中心多加点光、少写 alpha，所以中间是浅青色而不是空白。
+    // 外缘多写一点 alpha，亮车身上不会加成纯白。
+    float lightK = mix(0.92, 0.52, rise);
+    vec3 added = col * cover * lightK + lineCol * lineI;
+    float peak = max(added.r, max(added.g, added.b));
+    if (peak > 0.30) added *= 0.30 / peak;
+    float ink = (0.02 + 0.08 * rise) * fade * (1.0 - 0.5 * sideK);
+    if (cover + lineI < 0.015) discard;
+    gl_FragColor = vec4(added, ink);
   }
 `
 
@@ -157,9 +156,9 @@ function baseMaterial(uniforms: NaviUniforms): THREE.ShaderMaterial {
     side: THREE.DoubleSide,
     blending: THREE.CustomBlending,
     blendEquation: THREE.AddEquation,
-    blendSrc: THREE.SrcAlphaFactor,
+    blendSrc: THREE.OneFactor,
     blendDst: THREE.OneFactor,
-    blendSrcAlpha: THREE.ZeroFactor,
+    blendSrcAlpha: THREE.OneFactor,
     blendDstAlpha: THREE.OneFactor,
     toneMapped: false,
   })
@@ -187,8 +186,9 @@ export function createFloorTintMaterial(color = '#40D8FF', amount = 0): THREE.Sh
         if (uAmount < 0.001) discard;
         // 衬底也跟着横向变：中心不超过整段的约三分之一，避免把中间染实
         float lat = abs(vUv.y * 2.0 - 1.0);
-        float edge = pow(clamp(lat, 0.0, 1.0), 1.9);
-        float amt = uAmount * mix(0.28, 1.0, edge);
+        float rise = pow(smoothstep(0.15, 1.0, lat), 1.3);
+        float shape = 0.18 + 0.47 * rise;
+        float amt = uAmount * shape;
         gl_FragColor = vec4(uColor * amt, amt);
       }
     `,

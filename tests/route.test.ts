@@ -120,11 +120,11 @@ describe('route geometry', () => {
       if (pos.getZ(i) < endZ - 0.25) ahead = true
       if (Math.abs(pos.getZ(i) - startZ) < 0.05 && Math.abs(pos.getX(i)) < 0.15) {
         if (y < 0.02) frontLow = true
-        if (y > 0.12 && y < 0.22) frontHigh = true
+        if (y > 0.05 && y < 0.12) frontHigh = true
       }
     }
-    expect(maxY).toBeGreaterThan(0.12)
-    expect(maxY).toBeLessThanOrEqual(0.22)
+    expect(maxY).toBeGreaterThan(0.06)
+    expect(maxY).toBeLessThanOrEqual(0.12)
     expect(minY).toBeCloseTo(0, 2)
     expect(frontLow).toBe(true)
     expect(frontHigh).toBe(true)

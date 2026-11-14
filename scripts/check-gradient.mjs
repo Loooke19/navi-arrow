@@ -1,4 +1,4 @@
-// 横向透明度：画面约 75% 高度处，光带中心相对原图亮度差 < 12，两侧边缘 > 35
+// 横向渐变：中心仍有浅色，两侧亮但不超过大约 60–90，左右接近
 import { chromium } from 'playwright'
 import { PNG } from 'pngjs'
 
@@ -43,7 +43,12 @@ function measure(render, photo) {
   const edgeW = Math.max(8, Math.round(span * 0.22))
   for (let x = left; x <= left + edgeW; x++) if (d[x] > edgeL) { edgeL = d[x]; leftPeak = x }
   for (let x = right - edgeW; x <= right; x++) if (d[x] > edgeR) { edgeR = d[x]; rightPeak = x }
-  const ok = center < 12 && edgeL > 35 && edgeR > 35 && leftPeak < mid - 8 && rightPeak > mid + 8
+  const edgeHi = Math.max(edgeL, edgeR)
+  const edgeLo = Math.min(edgeL, edgeR)
+  const ok = center > 6 && center < 32
+    && edgeLo > 40 && edgeHi < 100
+    && edgeLo > edgeHi * 0.55
+    && leftPeak < mid - 8 && rightPeak > mid + 8
   return {
     ok, y, left, right, span, center: +center.toFixed(2),
     edgeL: +edgeL.toFixed(2), edgeR: +edgeR.toFixed(2), leftPeak, rightPeak,

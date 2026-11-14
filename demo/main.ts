@@ -81,15 +81,15 @@ btnHospital.addEventListener('click', () => { exitCameraMode(); applyScene('hosp
 const shotQuery = new URLSearchParams(location.search)
 const laneX = 0.28 // 近端落在车道中线附近（照片消失点约在画面 0.6）
 const straightRoute = [
-  [laneX, 0],
+  [laneX, -5.5], // 近端落在底栏上方，大约画面 y=700
   [laneX, -14],
   [laneX, -30],
   [laneX, -48],
   [laneX, -64], // 直行收到地平线，末端圆弧收口
 ]
 const turnRoute = [
-  [laneX, 0],
-  [laneX, -12],
+  [laneX, -5.5],
+  [laneX, -14],
   [laneX, -20],
   [0.7, -26],
   [2.4, -30],
@@ -100,7 +100,7 @@ const turnRoute = [
 const navi = createNaviArrow(document.getElementById('navi') as HTMLElement, {
   route: shotQuery.has('bend') ? turnRoute : straightRoute,
   curtainHeight: 0.5,
-  curtainWidth: 1.05,
+  curtainWidth: 1.62,
   showChevrons: true,
   autoRender: false,
   banner: { distance: '20米后', action: '进入', road: '无名路' },
@@ -152,10 +152,11 @@ const HOSPITAL = {
   aspect: 1400 / 1867,
   width: 0.85,
   height: 0.48,
-  tint: 0.05,
-  straight: [[0, 0], [0, -12], [0, -24], [0, -36], [0, -48]] as Array<[number, number]>,
+  tint: 0.06,
+  slab: 0.055,
+  straight: [[0, -2], [0, -12], [0, -24], [0, -36], [0, -48]] as Array<[number, number]>,
   // 先直行到走廊尽头附近，再以半径 1.8m 只向右弯一次，不先往左甩
-  turn: ([[0, 0], [0, -12], [0, -24], [0, -30]] as Array<[number, number]>).concat(rightArc(0, -30, 1.8, 80, 10)),
+  turn: ([[0, -2], [0, -12], [0, -24], [0, -30]] as Array<[number, number]>).concat(rightArc(0, -30, 1.8, 80, 10)),
 }
 function applyScene(id: SceneId) {
   const bend = shotQuery.has('bend')
@@ -165,6 +166,7 @@ function applyScene(id: SceneId) {
     navi.params.railHeight = HOSPITAL.height
     navi.theme.primary = '#00C8FF'
     navi.theme.highlight = '#7AF4FF'
+    navi.setSlab(HOSPITAL.slab)
     navi.setFloorFill(1)
     navi.setFloorTint(HOSPITAL.tint)
     navi.setRoute(bend ? HOSPITAL.turn : HOSPITAL.straight, { tension: 0 })
@@ -183,10 +185,11 @@ function applyScene(id: SceneId) {
     else img.onload = calibrate
   } else {
     img.src = './assets/street.jpg'
-    navi.params.bandWidth = 1.05
+    navi.params.bandWidth = 1.62
     navi.params.railHeight = 0.5
     navi.theme.primary = '#40D8FF'
     navi.theme.highlight = '#7AEEFF'
+    navi.setSlab(0.09)
     navi.setFloorFill(1)
     navi.setFloorTint(0)
     navi.setRoute(bend ? turnRoute : straightRoute)

@@ -1,7 +1,8 @@
 // REDO7 截图：直行、转弯、相机占位，以及和 DJI 参考的并排对比
+import { execFileSync } from 'node:child_process'
 import { chromium } from 'playwright'
 import { PNG } from 'pngjs'
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 
 mkdirSync('docs/compare', { recursive: true })
 
@@ -140,23 +141,100 @@ await page.waitForTimeout(700)
 await page.screenshot({ path: 'docs/compare/redo7-vs-dji.png', fullPage: true })
 console.log('redo7-vs-dji saved')
 
+// 近端整宽光带 vs DJI 楼群光带，同一显示比例，并画 75% 高度的横向强度
+execFileSync('ffmpeg', ['-y', '-i', 'reference/dji-frames/f_10.jpg', '/tmp/f10-grad.png'], { stdio: 'ignore' })
+const ours = PNG.sync.read(readFileSync('docs/compare/hospital-01-straight.png'))
+const dji = PNG.sync.read(readFileSync('/tmp/f10-grad.png'))
+function cropPng(src, x0, y0, cw, ch) {
+  const out = new PNG({ width: cw, height: ch })
+  for (let y = 0; y < ch; y++) for (let x = 0; x < cw; x++) {
+    const sx = Math.min(src.width - 1, x0 + x)
+    const sy = Math.min(src.height - 1, y0 + y)
+    const si = (sy * src.width + sx) << 2
+    const di = (y * cw + x) << 2
+    out.data[di] = src.data[si]
+    out.data[di + 1] = src.data[si + 1]
+    out.data[di + 2] = src.data[si + 2]
+    out.data[di + 3] = 255
+  }
+  return out
+}
+const ourCrop = cropPng(ours, 55, 560, 280, 210)
+const djiCrop = cropPng(dji, 740, 500, 460, 210)
+writeFileSync('/tmp/grad-ours.png', PNG.sync.write(ourCrop))
+writeFileSync('/tmp/grad-dji.png', PNG.sync.write(djiCrop))
+function channelAt(png, x, y) {
+  const i = (y * png.width + x) * 4
+  return png.data[i + 2] - png.data[i]
+}
+const yOurs = Math.round(ours.height * 0.75)
+const oursRow = []
+for (let x = 0; x < ours.width; x++) oursRow.push(channelAt(ours, x, yOurs))
+const side = oursRow.slice(10, 80).slice().sort((a, b) => a - b)
+const bg = side[Math.floor(side.length / 2)] || 0
+const oursDelta = oursRow.map((v) => Math.max(0, v - bg))
+let oL = oursDelta.findIndex((v) => v > 22)
+let oR = ours.width - 1
+for (let x = ours.width - 1; x >= 0; x--) if (oursDelta[x] > 22) { oR = x; break }
+const ourCurve = []
+for (let i = 0; i <= 40; i++) {
+  const x = Math.round(oL + (oR - oL) * (i / 40))
+  ourCurve.push(oursDelta[Math.min(ours.width - 1, Math.max(0, x))] || 0)
+}
+const yDji = 620
+const djiRow = []
+for (let x = 0; x < dji.width; x++) {
+  const i = (yDji * dji.width + x) * 4
+  djiRow.push(dji.data[i + 1] - dji.data[i])
+}
+let dL = 0
+let dR = djiRow.length - 1
+let best = 0
+for (let x = 700; x < 1200; x++) if (djiRow[x] > best) best = djiRow[x]
+for (let x = 700; x < 1200; x++) if (djiRow[x] > best * 0.45) { dL = x; break }
+for (let x = 1200; x > 700; x--) if (djiRow[x] > best * 0.45) { dR = x; break }
+const djiCurve = []
+for (let i = 0; i <= 40; i++) {
+  const x = Math.round(dL + (dR - dL) * (i / 40))
+  djiCurve.push(Math.max(0, djiRow[x] || 0))
+}
+const norm = (arr) => {
+  const m = Math.max(...arr, 1)
+  return arr.map((v) => v / m)
+}
+const oN = norm(ourCurve)
+const dN = norm(djiCurve)
+const poly = (arr, color) => {
+  const pts = arr.map((v, i) => `${20 + (i / 40) * 900},${200 - v * 160}`).join(' ')
+  return `<polyline fill="none" stroke="${color}" stroke-width="3" points="${pts}"/>`
+}
 const grad = `<!DOCTYPE html><html><head><meta charset="utf8"><style>
-  body{margin:0;background:#111;font-family:sans-serif;color:#e8eef8}
-  .row{display:flex;gap:16px;padding:16px;width:980px}
-  .cell{width:470px}
-  .frame{width:470px;height:520px;overflow:hidden;background:#000;position:relative}
-  .frame img{position:absolute;display:block}
-  .h img{width:780px;left:-80px;top:-1120px}
-  .d img{width:1100px;left:-640px;top:-90px}
-  .t{font-size:16px;text-align:center;padding:8px 4px 0}
-</style></head><body><div class="row">
-  <div class="cell"><div class="frame h"><img src="file://${process.cwd()}/docs/compare/hospital-01-straight.png"></div><div class="t">医院走廊 · 两边实、中间透</div></div>
-  <div class="cell"><div class="frame d"><img src="file://${process.cwd()}/reference/dji-frames/f_10.jpg"></div><div class="t">DJI · 楼群上的光带</div></div>
-</div></body></html>`
+  body{margin:0;background:#12141a;font-family:sans-serif;color:#e8eef8}
+  .row{display:flex;gap:18px;padding:16px 16px 0;width:980px;align-items:flex-end}
+  .cell{flex:1}
+  .cell img{width:100%;height:250px;object-fit:contain;background:#000;display:block}
+  .t{font-size:15px;text-align:center;padding:8px 4px}
+  svg{display:block;margin:8px 16px 16px;background:#0c0e12;border-radius:8px}
+  .key{font-size:13px}
+</style></head><body>
+  <div class="row">
+    <div class="cell"><img src="file:///tmp/grad-ours.png"><div class="t">医院近端 · 整宽光带</div></div>
+    <div class="cell"><img src="file:///tmp/grad-dji.png"><div class="t">DJI · 楼群上的光带</div></div>
+  </div>
+  <svg width="948" height="230" viewBox="0 0 948 230">
+    <text x="20" y="22" fill="#9ab" class="key">75% 高度横向强度（各自归一化）</text>
+    ${poly(oN, '#3ecbff')}
+    ${poly(dN, '#3dcc6a')}
+    <text x="20" y="218" fill="#3ecbff"> ours</text>
+    <text x="90" y="218" fill="#3dcc6a">DJI</text>
+    <text x="430" y="218" fill="#9ab">中心</text>
+    <text x="860" y="218" fill="#9ab">右缘</text>
+  </svg>
+</body></html>`
 writeFileSync('docs/compare/_gradient.html', grad)
-await page.setViewportSize({ width: 1020, height: 600 })
+await page.setViewportSize({ width: 1020, height: 560 })
 await page.goto(`file://${process.cwd()}/docs/compare/_gradient.html`)
 await page.waitForTimeout(500)
 await page.screenshot({ path: 'docs/compare/gradient-vs-dji.png' })
-console.log('gradient-vs-dji saved')
+console.log('gradient-vs-dji saved', { oL, oR, dL, dR })
 await b2.close()

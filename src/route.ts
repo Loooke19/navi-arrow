@@ -268,9 +268,9 @@ export function buildRailGeometry(
  * uv.x 沿程 0→1（弧盖在最末端），uv.y 0 左沿 → 1 右沿。aRim 在墙顶缘为 1。
  * 侧面、近端端面用独立顶点，法线保持水平，着色时比顶面中心更亮。
  */
-export const CHANNEL_SLAB_THICKNESS = 0.16
+export const CHANNEL_SLAB_THICKNESS = 0.075
 
-export function buildChannelGeometry(geo: RouteGeometry, halfWidth: number, height: number): THREE.BufferGeometry {
+export function buildChannelGeometry(geo: RouteGeometry, halfWidth: number, height: number, slab = CHANNEL_SLAB_THICKNESS): THREE.BufferGeometry {
   const cols = 17
   const positions: number[] = []
   const uvs: number[] = []
@@ -279,8 +279,7 @@ export function buildChannelGeometry(geo: RouteGeometry, halfWidth: number, heig
   const indices: number[] = []
   const n = geo.points.length
   const up = new THREE.Vector3(0, 1, 0)
-  const slab = CHANNEL_SLAB_THICKNESS
-  const lip = Math.max(slab, Math.min(height, slab + 0.04))
+  const lip = slab + 0.012
 
   const push = (x: number, y: number, z: number, u: number, v: number, rim: number, wall: number) => {
     positions.push(x, y, z)
@@ -367,10 +366,10 @@ export function buildChannelGeometry(geo: RouteGeometry, halfWidth: number, heig
     for (let i = 0; i < edge.length - 1; i++) {
       const a = edge[i]
       const b = edge[i + 1]
-      const a0 = push(a.x, 0, a.z, a.u, vEdge, 1, 1)
-      const a1 = push(a.x, a.y, a.z, a.u, vEdge, 1, 1)
-      const b0 = push(b.x, 0, b.z, b.u, vEdge, 1, 1)
-      const b1 = push(b.x, b.y, b.z, b.u, vEdge, 1, 1)
+      const a0 = push(a.x, 0, a.z, a.u, vEdge, 0, 1)
+      const a1 = push(a.x, a.y, a.z, a.u, vEdge, 0, 1)
+      const b0 = push(b.x, 0, b.z, b.u, vEdge, 0, 1)
+      const b1 = push(b.x, b.y, b.z, b.u, vEdge, 0, 1)
       indices.push(a0, b0, a1, a1, b0, b1)
     }
   }
