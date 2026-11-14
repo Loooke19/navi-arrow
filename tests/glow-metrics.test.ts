@@ -42,6 +42,31 @@ describe('光带亮度与细节', () => {
     expect(r.contrastOK).toBe(false)
   })
 
+  it('青蓝加光让 (蓝-红) 比原图至少高 25', () => {
+    const render = solid(w, h, (x) => {
+      const base = x < 14 ? [28, 32, 36] : x === 14 ? [210, 210, 200] : [70, 74, 80]
+      return [
+        Math.min(255, base[0] + 8),
+        Math.min(255, base[1] + 28),
+        Math.min(255, base[2] + 48),
+      ]
+    })
+    const r = evaluateGlow(render, photo, w, h, mask)
+    expect(r.blueDelta).toBeGreaterThanOrEqual(25)
+    expect(r.blueOK).toBe(true)
+    expect(r.lumaOK).toBe(true)
+  })
+
+  it('只是整体发白不算蓝光', () => {
+    const render = solid(w, h, (x) => {
+      const base = x < 14 ? [28, 32, 36] : x === 14 ? [210, 210, 200] : [70, 74, 80]
+      return base.map((v) => Math.min(255, v + 20))
+    })
+    const r = evaluateGlow(render, photo, w, h, mask)
+    expect(r.blueDelta).toBeLessThan(25)
+    expect(r.blueOK).toBe(false)
+  })
+
   it('不透明盖住路面时，细节低于 70%', () => {
     const render = solid(w, h, (x, y) => [40 + (x % 3), 70, 140 + (y % 2)])
     const r = evaluateGlow(render, photo, w, h, mask)

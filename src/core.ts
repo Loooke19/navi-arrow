@@ -406,7 +406,7 @@ export class NaviArrowCore {
     }
     this.railMesh = ([-1, 1] as const).map((side) => {
       const m = new THREE.Mesh(
-        buildRailGeometry(this.routeGeo!, halfW, this.params.railHeight, side, 1.05),
+        buildRailGeometry(this.routeGeo!, halfW, this.params.railHeight, side, 1.0),
         this.railMat,
       )
       m.frustumCulled = false
@@ -432,8 +432,8 @@ export class NaviArrowCore {
       m.uniforms.uFarColor.value.set(this.theme.highlight)
     }
     for (const m of this.chevronMats) {
-      m.uniforms.uColor.value.set(this.theme.highlight)
-      m.uniforms.uOpacity.value = 0.6 * this.params.opacity
+      m.uniforms.uColor.value.set(this.theme.primary)
+      m.uniforms.uOpacity.value = 0.85 * this.params.opacity
     }
     if (this.bloomPass) this.bloomPass.strength = this.params.bloomStrength
     // 只有带宽/光幕高度变化才重建几何（可避免每帧重建）
@@ -582,7 +582,7 @@ export class NaviArrowCore {
     const count = this.opts.chevronCount ?? 3
     this.chevronMats = []
     for (let i = 0; i < count; i++) {
-      const mat = createChevronMaterial(this.theme.highlight, 0.6 * this.params.opacity)
+      const mat = createChevronMaterial(this.theme.primary, 0.85 * this.params.opacity)
       this.chevronMats.push(mat)
       const mesh = new THREE.Mesh(geo, mat)
       mesh.frustumCulled = false

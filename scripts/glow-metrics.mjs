@@ -2,6 +2,7 @@
  * 光带区域验收：
  * (a) 渲染平均亮度 >= 原照片（加法光绝不压暗）
  * (b) 带内局部对比 / 边缘细节 >= 原照片的 70%（路面纹路仍看得清）
+ * (c) 带内 (蓝 - 红) 的平均值比原照片至少高 25，读得出是蓝光而不是发白
  */
 
 export function lumaOf(r, g, b) {
@@ -20,6 +21,8 @@ export function evaluateGlow(render, photo, width, height, mask) {
   const Lp = new Float32Array(width * height)
   let sumR = 0
   let sumP = 0
+  let sumBlueR = 0
+  let sumBlueP = 0
   let n = 0
   for (let i = 0; i < width * height; i++) {
     if (!mask[i]) continue
@@ -30,6 +33,8 @@ export function evaluateGlow(render, photo, width, height, mask) {
     Lp[i] = lp
     sumR += lr
     sumP += lp
+    sumBlueR += render[o + 2] - render[o]
+    sumBlueP += photo[o + 2] - photo[o]
     n++
   }
   let cR = 0
@@ -49,6 +54,9 @@ export function evaluateGlow(render, photo, width, height, mask) {
   const contrastRender = cn ? cR / cn : 0
   const contrastPhoto = cn ? cP / cn : 0
   const contrastRatio = contrastPhoto > 0.05 ? contrastRender / contrastPhoto : 1
+  const blueRender = n ? sumBlueR / n : 0
+  const bluePhoto = n ? sumBlueP / n : 0
+  const blueDelta = blueRender - bluePhoto
   return {
     samples: n,
     lumaRender,
@@ -57,8 +65,12 @@ export function evaluateGlow(render, photo, width, height, mask) {
     contrastRender,
     contrastPhoto,
     contrastRatio,
+    blueRender,
+    bluePhoto,
+    blueDelta,
     // 0.4 级余量只吸收截图像素舍入，真压暗会差几个亮度级
     lumaOK: n > 0 && lumaRender + 0.4 >= lumaPhoto,
     contrastOK: n > 0 && contrastRatio >= 0.7,
+    blueOK: n > 0 && blueDelta >= 25,
   }
 }

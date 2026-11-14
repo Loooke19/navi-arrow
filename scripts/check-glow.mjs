@@ -57,12 +57,15 @@ const out = {
   contrastRender: +result.contrastRender.toFixed(3),
   contrastPhoto: +result.contrastPhoto.toFixed(3),
   contrastRatio: +result.contrastRatio.toFixed(3),
+  blueRender: +result.blueRender.toFixed(2),
+  bluePhoto: +result.bluePhoto.toFixed(2),
+  blueDelta: +result.blueDelta.toFixed(2),
   marked,
 }
 console.log(JSON.stringify(out))
 
 mkdirSync('docs/compare', { recursive: true })
-if (!(result.lumaOK && result.contrastOK && marked > 400)) {
-  console.error('FAIL: 光带压暗了照片，或盖住了路面细节，或光带几乎不可见')
+if (!(result.lumaOK && result.contrastOK && result.blueOK && marked > 400)) {
+  console.error('FAIL: 光带压暗了照片、盖住了路面、几乎不可见，或不够蓝')
   process.exitCode = 1
 }

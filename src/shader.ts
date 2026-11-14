@@ -4,8 +4,8 @@
  * 帧缓冲里累加 color*alpha（黑底）。最终合成把这份光加到照片上，alpha 置 0，
  * 所以只会提亮，绝不会压暗路面。
  *
- * uMode 0 地面带：中心约 0.16、向两侧余弦羽化到 0，沿程 1 → 0.3 → 0
- * uMode 1 侧光幕：贴地约 0.35 收到顶边约 0.05，顶上再加一条屏幕空间细亮线
+ * uMode 0 地面带：青蓝 #3AA0FF→#66C8FF，中心约 0.34，两侧羽化，沿程 1 → 0.35 → 0
+ * uMode 1 侧光幕：转弯处贴地约 0.45 收到顶边，顶上一条青蓝细线（不是白线）
  */
 import * as THREE from 'three'
 
@@ -57,12 +57,11 @@ const frag = /* glsl */ `
 
   float hash(float n) { return fract(sin(n * 127.1) * 43758.5453); }
 
-  // 沿程：近 1.0 → 远 0.3 → 末端 0；脚下 2m 内柔和淡入
+  // 沿程：转弯那一段仍保持接近 1，只有最远端收到 0
   float routeFade(float along, float dist) {
-    float k = mix(1.0, 0.3, smoothstep(0.28, 0.78, along));
-    k *= 1.0 - smoothstep(0.78, 1.0, along);
-    // 脚下几米柔和淡入，底部不要切出一根亮边
-    k *= smoothstep(1.0, 3.8, dist);
+    float k = mix(1.0, 0.35, smoothstep(0.62, 0.9, along));
+    k *= 1.0 - smoothstep(0.9, 1.0, along);
+    k *= smoothstep(0.9, 3.2, dist);
     return k;
   }
 
@@ -82,17 +81,17 @@ const frag = /* glsl */ `
     if (uMode < 0.5) {
       // ===== 地面光带：均匀浅填充，两侧软落到 0，没有硬边 =====
       float across = abs(vUv.y - 0.5) * 2.0;
-      float feather = 0.5 + 0.5 * cos(across * 3.14159265);
-      float body = 0.17 * feather * fade * uOpacity;
-      body += pulse * 0.040 * feather * fade * uOpacity;
-      vec3 col = mix(nearCol, farCol, clamp(vUv.x * 0.55, 0.0, 1.0));
+      float feather = pow(max(0.5 + 0.5 * cos(across * 3.14159265), 0.0), 0.72);
+      float body = 0.34 * feather * fade * uOpacity;
+      body += pulse * 0.06 * feather * fade * uOpacity;
+      vec3 col = mix(nearCol, farCol, clamp(vUv.x * 0.4, 0.0, 1.0));
       added = col * body;
       a = body;
     } else {
       // ===== 侧光幕 =====
-      // 贴地最亮 (~0.35) → 顶边几乎收尽 (~0.05)，然后再叠顶边细线
+      // 贴地约 0.45 → 顶边约 0.07，转弯处这就是正面看见的光片
       float t = smoothstep(0.0, 1.0, vUv.y);
-      float bodyI = mix(0.35, 0.05, t);
+      float bodyI = mix(0.45, 0.07, t);
 
       // 很淡的竖向纤维（沿高度不变、沿路线疏密变化），像一层光纱
       float cells = mix(36.0, 80.0, clamp(uScanLines / 18.0, 0.0, 1.0));
@@ -104,13 +103,10 @@ const frag = /* glsl */ `
       float fiber = smoothstep(0.0, w * 0.5, f) * smoothstep(w, w * 0.45, f);
       bodyI *= mix(0.88, 1.0, fiber);
 
-      // 顺着看（直行）只留一层很淡的纱，避免侧幕投影成粗边；
-      // 正面看到（转弯）才是完整的 0.35 光片。
-      float face = smoothstep(0.06, 0.48, vFace);
-      float faceK = mix(0.16, 1.0, face);
-      faceK = max(faceK, smoothstep(0.25, 0.85, vTurn));
-      // 转弯处光幕正面展开，比直行时的淡边更亮、更立得住
-      faceK *= mix(1.0, 1.45, smoothstep(0.35, 1.0, vTurn));
+      // 顺着看只留一窄条，避免贴镜头摊成粗管；转弯（vTurn）用完整 0.45
+      float face = smoothstep(0.04, 0.4, vFace);
+      float faceK = mix(0.22, 1.0, face);
+      faceK = max(faceK, smoothstep(0.12, 0.55, vTurn));
       bodyI *= faceK;
       bodyI *= fade * uOpacity;
       bodyI += pulse * 0.05 * (1.0 - t) * fade * uOpacity;
@@ -119,15 +115,16 @@ const frag = /* glsl */ `
       float fw = max(fwidth(vUv.y), 1e-4);
       float px = (1.0 - vUv.y) / fw;
       float farT = smoothstep(4.0, 48.0, vDist);
-      float corePx = mix(1.15, 0.38, farT);
+      float corePx = mix(1.25, 0.42, farT);
       float core = exp(-0.5 * (px / corePx) * (px / corePx));
-      float glowPx = corePx * 2.4;
+      float glowPx = corePx * 2.2;
       float glow = exp(-0.5 * (px / max(glowPx, 0.8)) * (px / max(glowPx, 0.8)));
-      float lineI = (core * 0.55 + glow * 0.10) * fade * uOpacity;
-      lineI *= 1.0 + pulse * 0.22;
+      float lineI = (core * 0.82 + glow * 0.16) * fade * uOpacity;
+      lineI *= 1.0 + pulse * 0.18;
 
-      vec3 bodyCol = mix(nearCol, farCol, t * 0.35 + vUv.x * 0.25);
-      vec3 lineCol = vec3(0.78, 0.91, 1.0);
+      vec3 bodyCol = mix(nearCol, farCol, t * 0.25 + vUv.x * 0.2);
+      // 顶边是浅青蓝，不往白色靠
+      vec3 lineCol = mix(nearCol, vec3(0.45, 0.82, 1.0), 0.72);
       added = bodyCol * bodyI + lineCol * lineI;
       a = bodyI + lineI;
     }
@@ -155,7 +152,8 @@ const chevronFrag = /* glsl */ `
     float arm = 1.0 - smoothstep(0.62, 1.02, ax);
     float m = clamp((core * 0.72 + soft * 0.38) * arm, 0.0, 1.0);
     float a = m * uOpacity * uFade;
-    vec3 col = mix(vec3(0.62, 0.82, 1.0), uColor, clamp(core, 0.0, 1.0));
+    // 边缘是主题蓝，中心偏蓝白，一眼能认出来
+    vec3 col = mix(uColor, vec3(0.72, 0.90, 1.0), clamp(core, 0.0, 1.0));
     if (a < 0.012) discard;
     gl_FragColor = vec4(col, a);
   }

@@ -76,11 +76,15 @@ btnPhoto.addEventListener('click', exitCameraMode)
 // ---------- 组件 ----------
 const navi = createNaviArrow(document.getElementById('navi') as HTMLElement, {
   route: [
-    [0, 0],       // 脚前，贴地
-    [0, -30],     // 沿当前人行道直行 30m（伸到远处楼底附近）
-    [7, -37],     // 平滑右转（半径 ~8m）
-    [8.5, -47],   // 转入横街
-    [9, -57],     // 继续直行 ~20m
+    [0, 0],        // 脚前
+    [0, -12],
+    [0, -20],      // 沿当前车道直行，伸到路口
+    [1.2, -24],    // 开始右转
+    [4.5, -27.5],
+    [9, -29],      // 转入横街，这一段光幕正对镜头
+    [14, -30.5],
+    [18, -38],     // 沿横街走远
+    [20, -52],
   ],
   curtainHeight: 0.5,
   curtainWidth: 1.2,
@@ -130,7 +134,7 @@ attachDragLook(document.getElementById('phone')!, (yaw, pitch) => {
 // ---------- lil-gui 调参面板 ----------
 const gui = new GUI({ title: 'navi-arrow 调参' })
 const guiState = {
-  颜色: '#9DCEFF',
+  颜色: '#3AA0FF',
   带宽: navi.params.bandWidth,
   边缘光幕高: navi.params.railHeight,
   透明度: navi.params.opacity,
