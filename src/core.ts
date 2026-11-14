@@ -21,6 +21,7 @@ import {
   buildRailGeometry,
   buildGroundGridSegments,
   pointAtDistance,
+  chevronDimensions,
   type RouteGeometry,
 } from './route'
 import { createBandMaterial, createChevronMaterial, createRailMaterial } from './shader'
@@ -433,7 +434,7 @@ export class NaviArrowCore {
     }
     for (const m of this.chevronMats) {
       m.uniforms.uColor.value.set(this.theme.primary)
-      m.uniforms.uOpacity.value = 0.85 * this.params.opacity
+      m.uniforms.uOpacity.value = 1.05 * this.params.opacity
     }
     if (this.bloomPass) this.bloomPass.strength = this.params.bloomStrength
     // 只有带宽/光幕高度变化才重建几何（可避免每帧重建）
@@ -572,9 +573,8 @@ export class NaviArrowCore {
     this.disposeChevrons()
     if (!this.routeGeo) return
 
-    const width = this.params.bandWidth * 0.5
-    const length = width * 0.78
-    const geo = new THREE.PlaneGeometry(width, length, 1, 1)
+    const size = chevronDimensions(this.params.bandWidth)
+    const geo = new THREE.PlaneGeometry(size.planeW, size.planeL, 1, 1)
     geo.rotateX(-Math.PI / 2)
     geo.translate(0, 0.02, 0)
 
@@ -582,7 +582,7 @@ export class NaviArrowCore {
     const count = this.opts.chevronCount ?? 3
     this.chevronMats = []
     for (let i = 0; i < count; i++) {
-      const mat = createChevronMaterial(this.theme.primary, 0.85 * this.params.opacity)
+      const mat = createChevronMaterial(this.theme.primary, 1.05 * this.params.opacity, size)
       this.chevronMats.push(mat)
       const mesh = new THREE.Mesh(geo, mat)
       mesh.frustumCulled = false

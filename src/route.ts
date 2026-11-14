@@ -122,7 +122,58 @@ export function routeTurnFactors(geo: RouteGeometry): number[] {
     cur = next
   }
   // 0.02 rad/m 以下当直行；约 0.12 rad/m（半径 ~8m）顶满
-  return cur.map((c) => THREE.MathUtils.clamp((c - 0.015) / 0.10, 0, 1))
+  const factors = cur.map((c) => THREE.MathUtils.clamp((c - 0.015) / 0.10, 0, 1))
+  // 弯道之后的横街仍然对着镜头，光幕高度要保持住，不能只在曲率尖峰上立一下
+  const held = factors.slice()
+  for (let i = 0; i < n; i++) {
+    if (factors[i] < 0.45) continue
+    for (let j = 0; j < n; j++) {
+      const ds = geo.lengths[j] - geo.lengths[i]
+      // 只把弯心前后很短的一段立成光片，大约占屏幕宽度的一成多
+      if (ds < -1.6 || ds > 3.4) continue
+      const pre = ds >= 0 ? 1 : 1 + ds / 1.6
+      const sustain = ds <= 1.6 ? 1 : 1 - (ds - 1.6) / 1.8
+      held[j] = Math.max(held[j], factors[i] * Math.max(0, Math.min(pre, sustain)))
+    }
+  }
+  return held
+}
+
+/** 贴地 V 的尺寸。开口角约 105°，臂宽由着色器按宽度的 0.25 来画。 */
+export function chevronDimensions(bandWidth: number): { width: number; length: number; planeW: number; planeL: number } {
+  const width = bandWidth * 0.5
+  const opening = (105 * Math.PI) / 180
+  const length = width / 2 / Math.tan(opening / 2)
+  const pad = width * 0.28
+  return { width, length, planeW: width + pad * 2, planeL: length + pad * 2 }
+}
+
+/**
+ * 箭头局部坐标。+Z 是 Object3D.lookAt 的朝向（前进方向），尖端在 +Z，两翼在 -Z。
+ */
+export function chevronLocalCorners(width: number, length: number): { tip: THREE.Vector3; left: THREE.Vector3; right: THREE.Vector3 } {
+  return {
+    tip: new THREE.Vector3(0, 0.02, length * 0.5),
+    left: new THREE.Vector3(-width * 0.5, 0.02, -length * 0.5),
+    right: new THREE.Vector3(width * 0.5, 0.02, -length * 0.5),
+  }
+}
+
+/** 把 V 放到路线 dist 米处，尖端朝前进方向。与渲染用的 lookAt 一致。 */
+export function placeChevron(geo: RouteGeometry, dist: number, bandWidth: number): { tip: THREE.Vector3; left: THREE.Vector3; right: THREE.Vector3 } {
+  const { width, length } = chevronDimensions(bandWidth)
+  const local = chevronLocalCorners(width, length)
+  const p = pointAtDistance(geo, dist)
+  const ahead = pointAtDistance(geo, dist + 0.5)
+  const obj = new THREE.Object3D()
+  obj.position.set(p.x, 0, p.z)
+  obj.lookAt(ahead.x, 0, ahead.z)
+  obj.updateMatrix()
+  return {
+    tip: local.tip.clone().applyMatrix4(obj.matrix),
+    left: local.left.clone().applyMatrix4(obj.matrix),
+    right: local.right.clone().applyMatrix4(obj.matrix),
+  }
 }
 
 /**
