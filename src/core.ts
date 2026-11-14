@@ -207,6 +207,7 @@ export class NaviArrowCore {
   private tintAmount = 0
   private floorGain = 1
   private slab = 0.075
+  private brightFloor = false
   private railMesh: THREE.Mesh[] = []
   private railMat?: THREE.ShaderMaterial
   private lastBuilt = { bandWidth: 1.2, railHeight: 0.5 }
@@ -413,6 +414,7 @@ export class NaviArrowCore {
       })
     }
     this.bandMat.uniforms.uFloorGain.value = this.floorGain
+    if (this.bandMat.uniforms.uBright) this.bandMat.uniforms.uBright.value = this.brightFloor ? 1 : 0
     const wallH = Math.min(0.58, Math.max(0.42, this.params.railHeight || 0.5))
     const channelGeo = buildChannelGeometry(this.routeGeo, halfW, wallH, this.slab)
     if (!this.tintMat) this.tintMat = createFloorTintMaterial(this.theme.primary, this.tintAmount)
@@ -444,6 +446,17 @@ export class NaviArrowCore {
   setFloorFill(gain: number) {
     this.floorGain = Math.max(0, gain)
     if (this.bandMat) this.bandMat.uniforms.uFloorGain.value = this.floorGain
+  }
+
+  /**
+   * 光带底下的背景有多亮。均值超过 180 时改用饱和青的正常透明混合，
+   * 白地板和相机实景都能看出从边缘到中心的渐变。
+   */
+  setBackgroundLuma(luma: number) {
+    const bright = luma > 165
+    if (bright === this.brightFloor) return
+    this.brightFloor = bright
+    if (this.bandMat?.uniforms?.uBright) this.bandMat.uniforms.uBright.value = bright ? 1 : 0
   }
 
   /** 亮地板上的极淡青色衬底。0 表示关闭。 */

@@ -44,6 +44,7 @@ const frag = /* glsl */ `
   uniform float uTime;
   uniform float uFlowSpeed;
   uniform float uFloorGain;
+  uniform float uBright;
   varying vec2 vUv;
   varying vec3 vWorldPos;
   varying vec3 vNormal;
@@ -56,32 +57,41 @@ const frag = /* glsl */ `
     float fade = mix(1.0, 0.82, smoothstep(0.72, 1.0, vUv.x));
     fade *= smoothstep(0.35, 1.8, vDist);
     vec3 N = normalize(vNormal);
-    // 宽而缓的横向渐变：中心约 0.18，外缘约 0.65，过渡铺在两侧大约四成宽度上。
+    // 一直爬到边缘，不在外侧 20% 走平。0.97 处到顶，最外一圈不再另起一根刺。
     float lat = abs(vUv.y * 2.0 - 1.0);
-    float rise = pow(smoothstep(0.15, 1.0, lat), 1.3);
-    float shape = 0.18 + 0.47 * rise;
+    float rise = pow(smoothstep(0.10, 0.97, lat), 1.2);
     float sideK = 1.0 - smoothstep(0.30, 0.84, abs(N.y));
-    // 侧面和近端切面比顶面更实，但不再叠一条刺眼的轨
-    float cover = mix(shape, 0.78, sideK) * fade * uOpacity;
-    vec3 col = mix(uColor, uFarColor, clamp(vUv.x * 0.22, 0.0, 1.0));
-    // 顶缘细线：很窄、很轻，只勾出轮廓
     float fw = max(fwidth(vRim), 1e-4);
     float px = (1.0 - vRim) / fw;
     float farT = smoothstep(4.0, 40.0, vDist);
-    float corePx = mix(0.5, 0.26, farT);
+    float corePx = mix(0.42, 0.22, farT);
     float line = exp(-0.5 * (px / corePx) * (px / corePx));
-    line *= smoothstep(0.84, 0.99, vRim);
-    float lineI = line * 0.035 * fade * uOpacity * (1.0 - sideK);
-    vec3 lineCol = vec3(0.55, 0.88, 0.98);
-    // 中心多加点光、少写 alpha，所以中间是浅青色而不是空白。
-    // 外缘多写一点 alpha，亮车身上不会加成纯白。
-    float lightK = mix(0.92, 0.52, rise);
-    vec3 added = col * cover * lightK + lineCol * lineI;
-    float peak = max(added.r, max(added.g, added.b));
-    if (peak > 0.30) added *= 0.30 / peak;
-    float ink = (0.02 + 0.08 * rise) * fade * (1.0 - 0.5 * sideK);
-    if (cover + lineI < 0.015) discard;
-    gl_FragColor = vec4(added, ink);
+    line *= smoothstep(0.9, 0.995, vRim) * (1.0 - sideK);
+
+    if (uBright > 0.5) {
+      // 白地板：正常透明混合。饱和青 #00B4E6，中心约 0.11，边缘约 0.58。
+      vec3 cyan = vec3(0.0, 0.706, 0.902);
+      float alpha = mix(0.11, 0.58, rise);
+      alpha = mix(alpha, 0.62, sideK);
+      // 细边最多比坡顶高约 10%
+      alpha += line * 0.05;
+      alpha = min(alpha, 0.66) * fade * uOpacity;
+      if (alpha < 0.02) discard;
+      gl_FragColor = vec4(cyan * alpha, alpha);
+    } else {
+      float shape = 0.20 + 0.42 * rise;
+      float cover = mix(shape, 0.68, sideK) * fade * uOpacity;
+      vec3 col = mix(uColor, uFarColor, clamp(vUv.x * 0.22, 0.0, 1.0));
+      float lineI = line * 0.02 * fade * uOpacity;
+      vec3 lineCol = vec3(0.55, 0.88, 0.98);
+      float lightK = 0.50;
+      vec3 added = col * cover * lightK + lineCol * lineI;
+      float peak = max(added.r, max(added.g, added.b));
+      if (peak > 0.32) added *= 0.32 / peak;
+      float ink = (0.015 + 0.05 * rise) * fade * (1.0 - 0.45 * sideK);
+      if (cover + lineI < 0.015) discard;
+      gl_FragColor = vec4(added, ink);
+    }
   }
 `
 
@@ -143,6 +153,7 @@ export interface NaviUniforms {
   uReveal: { value: number }
   uMode: { value: number }
   uFloorGain: { value: number }
+  uBright: { value: number }
 }
 
 function baseMaterial(uniforms: NaviUniforms): THREE.ShaderMaterial {
@@ -186,8 +197,8 @@ export function createFloorTintMaterial(color = '#40D8FF', amount = 0): THREE.Sh
         if (uAmount < 0.001) discard;
         // 衬底也跟着横向变：中心不超过整段的约三分之一，避免把中间染实
         float lat = abs(vUv.y * 2.0 - 1.0);
-        float rise = pow(smoothstep(0.15, 1.0, lat), 1.3);
-        float shape = 0.18 + 0.47 * rise;
+        float rise = pow(smoothstep(0.10, 0.97, lat), 1.2);
+        float shape = mix(0.11, 0.58, rise);
         float amt = uAmount * shape;
         gl_FragColor = vec4(uColor * amt, amt);
       }
@@ -223,6 +234,7 @@ export function createBandMaterial(opts: {
     uReveal: { value: 1 },
     uMode: { value: 0 },
     uFloorGain: { value: 1 },
+    uBright: { value: 0 },
   }
   return baseMaterial(uniforms)
 }

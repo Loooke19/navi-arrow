@@ -144,6 +144,7 @@ console.log('redo7-vs-dji saved')
 // 近端整宽光带 vs DJI 楼群光带，同一显示比例，并画 75% 高度的横向强度
 execFileSync('ffmpeg', ['-y', '-i', 'reference/dji-frames/f_10.jpg', '/tmp/f10-grad.png'], { stdio: 'ignore' })
 const ours = PNG.sync.read(readFileSync('docs/compare/hospital-01-straight.png'))
+const street = PNG.sync.read(readFileSync('docs/compare/demo-01-straight.png'))
 const dji = PNG.sync.read(readFileSync('/tmp/f10-grad.png'))
 function cropPng(src, x0, y0, cw, ch) {
   const out = new PNG({ width: cw, height: ch })
@@ -202,7 +203,22 @@ const norm = (arr) => {
   const m = Math.max(...arr, 1)
   return arr.map((v) => v / m)
 }
+const yStreet = Math.round(street.height * 0.75)
+const streetRow = []
+for (let x = 0; x < street.width; x++) streetRow.push(channelAt(street, x, yStreet))
+const streetSide = streetRow.slice(10, 80).slice().sort((a, b) => a - b)
+const streetBg = streetSide[Math.floor(streetSide.length / 2)] || 0
+const streetDelta = streetRow.map((v) => Math.max(0, v - streetBg))
+let sL = streetDelta.findIndex((v) => v > 18)
+let sR = street.width - 1
+for (let x = street.width - 1; x >= 0; x--) if (streetDelta[x] > 18) { sR = x; break }
+const streetCurve = []
+for (let i = 0; i <= 40; i++) {
+  const x = Math.round(sL + (sR - sL) * (i / 40))
+  streetCurve.push(streetDelta[Math.min(street.width - 1, Math.max(0, x))] || 0)
+}
 const oN = norm(ourCurve)
+const sN = norm(streetCurve)
 const dN = norm(djiCurve)
 const poly = (arr, color) => {
   const pts = arr.map((v, i) => `${20 + (i / 40) * 900},${200 - v * 160}`).join(' ')
@@ -224,9 +240,11 @@ const grad = `<!DOCTYPE html><html><head><meta charset="utf8"><style>
   <svg width="948" height="230" viewBox="0 0 948 230">
     <text x="20" y="22" fill="#9ab" class="key">75% 高度横向强度（各自归一化）</text>
     ${poly(oN, '#3ecbff')}
+    ${poly(sN, '#7ad0ff')}
     ${poly(dN, '#3dcc6a')}
-    <text x="20" y="218" fill="#3ecbff"> ours</text>
-    <text x="90" y="218" fill="#3dcc6a">DJI</text>
+    <text x="20" y="218" fill="#3ecbff">医院</text>
+    <text x="70" y="218" fill="#7ad0ff">街景</text>
+    <text x="130" y="218" fill="#3dcc6a">DJI</text>
     <text x="430" y="218" fill="#9ab">中心</text>
     <text x="860" y="218" fill="#9ab">右缘</text>
   </svg>

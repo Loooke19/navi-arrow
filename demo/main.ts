@@ -152,7 +152,7 @@ const HOSPITAL = {
   aspect: 1400 / 1867,
   width: 0.85,
   height: 0.48,
-  tint: 0.06,
+  tint: 0,
   slab: 0.055,
   straight: [[0, -2], [0, -12], [0, -24], [0, -36], [0, -48]] as Array<[number, number]>,
   // 先直行到走廊尽头附近，再以半径 1.8m 只向右弯一次，不先往左甩
@@ -308,6 +308,38 @@ gui.add(guiState, 'V形箭头').onChange((v: boolean) => navi.setChevrons(v))
 const fpsHolder = { FPS: 0 }
 gui.add(fpsHolder, 'FPS').disable()
 
+// 光带中心底下的背景亮度。超过 180 走饱和青的正常透明混合。
+const probe = document.createElement('canvas')
+probe.width = 24
+probe.height = 12
+const probeCtx = probe.getContext('2d', { willReadFrequently: true })
+function sampleBandBackground(): number | null {
+  const src: CanvasImageSource | null = (video.style.display !== 'none' && video.readyState >= 2)
+    ? video
+    : (img.complete && img.naturalWidth ? img : null)
+  if (!src || !probeCtx) return null
+  const sw = (src as HTMLVideoElement).videoWidth || img.naturalWidth
+  const sh = (src as HTMLVideoElement).videoHeight || img.naturalHeight
+  if (!sw || !sh) return null
+  const vw = phone.clientWidth || 390
+  const vh = phone.clientHeight || 844
+  const scale = Math.max(vw / sw, vh / sh)
+  const ox = (sw * scale - vw) / 2
+  const oy = (sh * scale - vh) / 2
+  const vx0 = vw * 0.40
+  const vy0 = vh * 0.66
+  const vx1 = vw * 0.60
+  const vy1 = vh * 0.76
+  probeCtx.drawImage(src, (vx0 + ox) / scale, (vy0 + oy) / scale, (vx1 - vx0) / scale, (vy1 - vy0) / scale, 0, 0, probe.width, probe.height)
+  const data = probeCtx.getImageData(0, 0, probe.width, probe.height).data
+  let sum = 0
+  const n = probe.width * probe.height
+  for (let i = 0; i < data.length; i += 4) sum += 0.2126 * data[i] + 0.7152 * data[i + 1] + 0.0722 * data[i + 2]
+  const luma = sum / n
+  ;(window as any).__bandLuma = luma
+  return luma
+}
+
 // ---------- 渲染循环（window.__pauseRender 控制截图） ----------
 const phone = document.getElementById('phone')!
 ;(window as any).__pauseRender = false
@@ -322,6 +354,8 @@ function frame() {
       camera.updateProjectionMatrix()
     }
     navi.setCameraPose(camera.position, camera.quaternion)
+    const luma = sampleBandBackground()
+    if (luma != null) navi.setBackgroundLuma(luma)
     navi.render()
     fpsFrames++
     const now = performance.now()

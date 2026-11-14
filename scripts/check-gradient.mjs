@@ -20,11 +20,22 @@ function rowDelta(render, photo, y) {
 function measure(render, photo) {
   const y = Math.round(render.height * 0.75)
   const d = rowDelta(render, photo, y)
+  const brRow = new Float32Array(d.length)
+  for (let x = 0; x < d.length; x++) {
+    const o = (y * render.width + x) * 4
+    brRow[x] = render.data[o + 2] - render.data[o]
+  }
   const hot = []
-  for (let x = 0; x < d.length; x++) if (d[x] > 18) hot.push(x)
-  if (hot.length < 8) return { ok: false, y, reason: '这一行几乎没有光带', hot: hot.length }
-  const left = hot[0]
-  const right = hot[hot.length - 1]
+  const hotBr = []
+  for (let x = 0; x < d.length; x++) {
+    if (d[x] > 18) hot.push(x)
+    if (brRow[x] > 40) hotBr.push(x)
+  }
+  const useBr = hot.length < 8 && hotBr.length >= 8
+  const spanHot = useBr ? hotBr : hot
+  if (spanHot.length < 8) return { ok: false, y, reason: '这一行几乎没有光带', hot: hot.length, hotBr: hotBr.length }
+  const left = spanHot[0]
+  const right = spanHot[spanHot.length - 1]
   const span = right - left
   const mid = (left + right) / 2
   const mean = (x0, x1) => {
@@ -35,23 +46,42 @@ function measure(render, photo) {
     for (let x = a; x <= b; x++) { s += d[x]; n++ }
     return n ? s / n : 0
   }
+  const brAt = (x0, x1) => {
+    let s = 0
+    let n = 0
+    const a = Math.max(0, Math.round(x0))
+    const b = Math.min(render.width - 1, Math.round(x1))
+    for (let x = a; x <= b; x++) {
+      const o = (y * render.width + x) * 4
+      s += render.data[o + 2] - render.data[o]
+      n++
+    }
+    return n ? s / n : 0
+  }
   const center = Math.abs(mean(mid - 4, mid + 4))
   let leftPeak = left
   let rightPeak = right
   let edgeL = -1
   let edgeR = -1
   const edgeW = Math.max(8, Math.round(span * 0.22))
-  for (let x = left; x <= left + edgeW; x++) if (d[x] > edgeL) { edgeL = d[x]; leftPeak = x }
-  for (let x = right - edgeW; x <= right; x++) if (d[x] > edgeR) { edgeR = d[x]; rightPeak = x }
+  const signal = useBr ? brRow : d
+  for (let x = left; x <= left + edgeW; x++) if (signal[x] > edgeL) { edgeL = signal[x]; leftPeak = x }
+  for (let x = right - edgeW; x <= right; x++) if (signal[x] > edgeR) { edgeR = signal[x]; rightPeak = x }
   const edgeHi = Math.max(edgeL, edgeR)
   const edgeLo = Math.min(edgeL, edgeR)
-  const ok = center > 6 && center < 32
-    && edgeLo > 40 && edgeHi < 100
+  const brL = brAt(leftPeak - 1, leftPeak + 1)
+  const brR = brAt(rightPeak - 1, rightPeak + 1)
+  const brC = brAt(mid - 4, mid + 4)
+  const lumaOK = center > 6 && center < 36
+    && edgeLo > 35 && edgeHi < 110
     && edgeLo > edgeHi * 0.55
     && leftPeak < mid - 8 && rightPeak > mid + 8
+  const cyanOK = brL > 70 && brR > 70 && brC < 25
   return {
-    ok, y, left, right, span, center: +center.toFixed(2),
+    ok: useBr ? cyanOK : lumaOK, y, left, right, span, center: +center.toFixed(2),
     edgeL: +edgeL.toFixed(2), edgeR: +edgeR.toFixed(2), leftPeak, rightPeak,
+    brL: +brL.toFixed(1), brR: +brR.toFixed(1), brC: +brC.toFixed(1),
+    lumaOK,
   }
 }
 
@@ -87,8 +117,9 @@ const scenes = [
 let failed = false
 for (const [name, url] of scenes) {
   const result = await shoot(browser, url)
-  console.log(JSON.stringify({ name, ...result }))
-  if (!result.ok) failed = true
+  const brightOK = name !== 'hospital' || (result.brL > 70 && result.brR > 70 && result.brC < 25)
+  console.log(JSON.stringify({ name, ...result, brightOK }))
+  if (!result.ok || !brightOK) failed = true
 }
 await browser.close()
 if (failed) {
