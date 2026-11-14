@@ -1,44 +1,68 @@
-// REDO5 验收：地面带必须是「加光」——采样带内像素 vs 关闭组件后同位置像素，必须更亮
+// 光带验收：带内像素必须比原照片更亮，且路面局部对比至少保留 70%
 import { chromium } from 'playwright'
 import { PNG } from 'pngjs'
+import { mkdirSync } from 'node:fs'
+import { evaluateGlow } from './glow-metrics.mjs'
 
-const browser = await chromium.launch({ args: ['--use-gl=angle'] })
-const page = await browser.newPage({ viewport: { width: 390, height: 844 } })
-await page.goto('http://localhost:5173/?shot=1')
-await page.waitForTimeout(3000)
-
-// 带光截图（取样路线中段无箭头区：光带必经之处，避开立体箭头）
-await page.evaluate(() => { window.__pauseRender = true })
-await page.waitForTimeout(300)
-const withGlow = PNG.sync.read(await page.screenshot({ clip: { x: 180, y: 430, width: 30, height: 60 } }))
-
-// 隐藏组件（只留照片），同区域截图
-await page.evaluate(() => {
-  window.__pauseRender = false
-  const navi = document.getElementById('navi')
-  if (navi) navi.style.display = 'none'
+const base = process.env.NAVI_URL ?? 'http://localhost:5173/?shot=1'
+const browser = await chromium.launch({
+  args: ['--use-gl=angle', '--enable-webgl', '--ignore-gpu-blocklist'],
 })
-await page.waitForTimeout(500)
+const page = await browser.newPage({ viewport: { width: 390, height: 844 } })
+await page.goto(base)
+await page.waitForTimeout(2800)
 await page.evaluate(() => { window.__pauseRender = true })
-await page.waitForTimeout(300)
-const noGlow = PNG.sync.read(await page.screenshot({ clip: { x: 180, y: 430, width: 30, height: 60 } }))
+await page.waitForTimeout(250)
 
-function luma(png) {
-  let sum = 0
-  let n = 0
-  for (let i = 0; i < png.data.length; i += 4) {
-    sum += 0.2126 * png.data[i] + 0.7152 * png.data[i + 1] + 0.0722 * png.data[i + 2]
-    n++
-  }
-  return sum / n
+const withRoute = PNG.sync.read(await page.screenshot())
+await page.evaluate(() => {
+  const canvas = document.querySelector('#navi')?.shadowRoot?.querySelector('canvas')
+  if (canvas) canvas.style.visibility = 'hidden'
+})
+await page.waitForTimeout(200)
+const photo = PNG.sync.read(await page.screenshot())
+await browser.close()
+
+if (withRoute.width !== photo.width || withRoute.height !== photo.height) {
+  console.error('FAIL: 两次截图尺寸不一致')
+  process.exit(1)
 }
 
-const lWith = luma(withGlow)
-const lWithout = luma(noGlow)
-const delta = lWith - lWithout
-console.log(JSON.stringify({ withGlow: +lWith.toFixed(2), photoOnly: +lWithout.toFixed(2), delta: +delta.toFixed(2), brightens: delta > 0 }))
-if (!(delta > 0)) {
-  console.error('FAIL: 地面带没有提亮照片（压暗了）')
+const w = withRoute.width
+const h = withRoute.height
+const mask = new Uint8Array(w * h)
+let marked = 0
+// 排除顶栏和底栏，只在路线会经过的路面区域里找「被光改过」的像素
+const y0 = Math.floor(h * 0.42)
+const y1 = Math.floor(h * 0.88)
+for (let y = y0; y < y1; y++) {
+  for (let x = 0; x < w; x++) {
+    const o = (y * w + x) * 4
+    const d = Math.abs(withRoute.data[o] - photo.data[o])
+      + Math.abs(withRoute.data[o + 1] - photo.data[o + 1])
+      + Math.abs(withRoute.data[o + 2] - photo.data[o + 2])
+    if (d > 10) {
+      mask[y * w + x] = 1
+      marked++
+    }
+  }
+}
+
+const result = evaluateGlow(withRoute.data, photo.data, w, h, mask)
+const out = {
+  ...result,
+  lumaRender: +result.lumaRender.toFixed(2),
+  lumaPhoto: +result.lumaPhoto.toFixed(2),
+  lumaDelta: +result.lumaDelta.toFixed(2),
+  contrastRender: +result.contrastRender.toFixed(3),
+  contrastPhoto: +result.contrastPhoto.toFixed(3),
+  contrastRatio: +result.contrastRatio.toFixed(3),
+  marked,
+}
+console.log(JSON.stringify(out))
+
+mkdirSync('docs/compare', { recursive: true })
+if (!(result.lumaOK && result.contrastOK && marked > 400)) {
+  console.error('FAIL: 光带压暗了照片，或盖住了路面细节，或光带几乎不可见')
   process.exitCode = 1
 }
-await browser.close()

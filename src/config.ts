@@ -15,10 +15,11 @@ export interface NaviTheme {
 }
 
 export const DEFAULT_THEME: NaviTheme = {
-  primary: '#8EC5FF',
-  highlight: '#C5E0FF',
-  nearOpacity: 0.75,
-  farOpacity: 0.02,
+  primary: '#9DCEFF',
+  highlight: '#EAF4FF',
+  /** 1 = 设计强度：地面带中心约 0.16，侧幕贴地约 0.35 */
+  nearOpacity: 1,
+  farOpacity: 0.3,
 }
 
 export interface BannerConfig {
@@ -52,9 +53,9 @@ export interface NaviArrowOptions {
   background?: 'transparent' | 'none'
   /** 路线：局部坐标点数组（世界坐标米），y 向上；或 {points, heights} 3D 路径 */
   route?: Array<[number, number, number] | [number, number]> | { points: Array<[number, number, number] | [number, number]> }
-  /** 光幕顶边离地高度（米），默认 0.4 */
+  /** 侧光幕高度（米），默认 0.5。转弯处会按曲率再抬高 */
   curtainHeight?: number
-  /** 光幕底部半宽（米），默认 0.8 */
+  /** 地面光带宽度（米），默认 1.2 */
   curtainWidth?: number
   /** 颜色主题 */
   theme?: Partial<NaviTheme>

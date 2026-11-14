@@ -1,9 +1,8 @@
 /**
- * 路线几何（REDO5）：
- * - 地面带（BAND）：1.2m 宽贴地半透明发光面，带 uv（沿路距 & 横向）
- * - 两条亮边线折线（供 Line2 屏幕空间 2px 亮线）
- * - 两条低矮边缘光幕（Rails）：站在带的两侧，高度 0.25m，α 顶 0.5 → 底 0.05
- * - 平面滑动 V 形箭头（在带内滑行）
+ * 路线几何：
+ * - 地面带：贴地，uv.x 沿程、uv.y 横向
+ * - 两侧低矮光幕：底边 y=0，顶边约 0.5m，转弯处按曲率再抬高
+ * 顶边细线画在光幕着色器里（屏幕空间），不再挤出地面管线。
  */
 import * as THREE from 'three'
 
@@ -56,6 +55,7 @@ export function buildBandGeometry(geo: RouteGeometry, halfWidth: number): THREE.
   const n = geo.points.length
   const positions = new Float32Array(n * 2 * 3)
   const uvs = new Float32Array(n * 2 * 2)
+  const turns = new Float32Array(n * 2)
   const indices: number[] = []
   for (let i = 0; i < n; i++) {
     const p = geo.points[i]
@@ -77,12 +77,13 @@ export function buildBandGeometry(geo: RouteGeometry, halfWidth: number): THREE.
   const g = new THREE.BufferGeometry()
   g.setAttribute('position', new THREE.BufferAttribute(positions, 3))
   g.setAttribute('uv', new THREE.BufferAttribute(uvs, 2))
+  g.setAttribute('aTurn', new THREE.BufferAttribute(turns, 1))
   g.setIndex(indices)
   g.computeVertexNormals()
   return g
 }
 
-/** 两条边线折线点（左缘、右缘），供 Line2 屏幕空间亮线 */
+/** 两条边线折线点（左缘、右缘）。地面粗管线已移除，函数保留给测试与外部调用。 */
 export function buildEdgeLinePoints(geo: RouteGeometry, halfWidth: number): [THREE.Vector3[], THREE.Vector3[]] {
   const left: THREE.Vector3[] = []
   const right: THREE.Vector3[] = []
@@ -96,19 +97,51 @@ export function buildEdgeLinePoints(geo: RouteGeometry, halfWidth: number): [THR
 }
 
 /**
- * 低矮边缘光幕：站在地面带两侧，沿中心线竖直升起 height。
- * 每个采样点 2 顶点（底 0、顶 height），uv.y = 0 底 ~ 1 顶。
- * 若 side = -1 取左缘，+1 取右缘。
+ * 每个采样点的转弯强度 0（直行）..1（约 8m 半径或更急）。
+ * 做了平滑，避免光幕高度在一个顶点上跳。
+ */
+export function routeTurnFactors(geo: RouteGeometry): number[] {
+  const n = geo.points.length
+  const raw = new Array<number>(n).fill(0)
+  for (let i = 1; i < n - 1; i++) {
+    const ax = geo.points[i].x - geo.points[i - 1].x
+    const az = geo.points[i].z - geo.points[i - 1].z
+    const bx = geo.points[i + 1].x - geo.points[i].x
+    const bz = geo.points[i + 1].z - geo.points[i].z
+    const la = Math.hypot(ax, az)
+    const lb = Math.hypot(bx, bz)
+    if (la < 1e-5 || lb < 1e-5) continue
+    const cos = Math.min(1, Math.max(-1, (ax * bx + az * bz) / (la * lb)))
+    const ang = Math.acos(cos)
+    raw[i] = ang / Math.max(la, lb)
+  }
+  let cur = raw
+  for (let pass = 0; pass < 6; pass++) {
+    const next = cur.slice()
+    for (let i = 1; i < n - 1; i++) next[i] = cur[i - 1] * 0.25 + cur[i] * 0.5 + cur[i + 1] * 0.25
+    cur = next
+  }
+  // 0.02 rad/m 以下当直行；约 0.12 rad/m（半径 ~8m）顶满
+  return cur.map((c) => THREE.MathUtils.clamp((c - 0.015) / 0.10, 0, 1))
+}
+
+/**
+ * 低矮边缘光幕：站在地面带两侧。
+ * 底边 y=0，顶边 = height * (1 + turnLift * 转弯强度)。
+ * turnLift 默认 0，保持旧调用「等高」的行为。
  */
 export function buildRailGeometry(
   geo: RouteGeometry,
   halfWidth: number,
   height: number,
   side: -1 | 1,
+  turnLift = 0,
 ): THREE.BufferGeometry {
   const n = geo.points.length
+  const turn = turnLift > 0 ? routeTurnFactors(geo) : null
   const positions = new Float32Array(n * 2 * 3)
   const uvs = new Float32Array(n * 2 * 2)
+  const turns = new Float32Array(n * 2)
   const indices: number[] = []
   for (let i = 0; i < n; i++) {
     const p = geo.points[i]
@@ -116,10 +149,14 @@ export function buildRailGeometry(
     const x = p.x + side * s.x * halfWidth
     const z = p.z + side * s.z * halfWidth
     const u = geo.lengths[i] / (geo.total || 1)
+    const k = turn ? turn[i] : 0
+    const h = height * (1 + turnLift * k)
     positions[i * 6 + 0] = x; positions[i * 6 + 1] = 0; positions[i * 6 + 2] = z
-    positions[i * 6 + 3] = x; positions[i * 6 + 4] = height; positions[i * 6 + 5] = z
+    positions[i * 6 + 3] = x; positions[i * 6 + 4] = h; positions[i * 6 + 5] = z
     uvs[i * 4 + 0] = u; uvs[i * 4 + 1] = 0
     uvs[i * 4 + 2] = u; uvs[i * 4 + 3] = 1
+    turns[i * 2] = k
+    turns[i * 2 + 1] = k
     if (i < n - 1) {
       const a = i * 2, b = a + 1, c = (i + 1) * 2, d = c + 1
       indices.push(a, c, b, b, c, d)
@@ -128,6 +165,7 @@ export function buildRailGeometry(
   const g = new THREE.BufferGeometry()
   g.setAttribute('position', new THREE.BufferAttribute(positions, 3))
   g.setAttribute('uv', new THREE.BufferAttribute(uvs, 2))
+  g.setAttribute('aTurn', new THREE.BufferAttribute(turns, 1))
   g.setIndex(indices)
   g.computeVertexNormals()
   return g

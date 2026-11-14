@@ -82,7 +82,7 @@ const navi = createNaviArrow(document.getElementById('navi') as HTMLElement, {
     [8.5, -47],   // 转入横街
     [9, -57],     // 继续直行 ~20m
   ],
-  curtainHeight: 0.3,
+  curtainHeight: 0.5,
   curtainWidth: 1.2,
   showChevrons: true,
   autoRender: false,
@@ -108,6 +108,15 @@ function applyLook() {
   const e = new THREE.Euler(yawPitch.pitch, yawPitch.yaw, 0, 'YXZ')
   camera.quaternion.setFromEuler(e)
 }
+// ?yaw= 弧度，截图时把镜头转向弯道，让侧光幕正面展开
+const shotParams = new URLSearchParams(location.search)
+const yawQ = parseFloat(shotParams.get('yaw') ?? '')
+if (!Number.isNaN(yawQ)) yawPitch.yaw = yawQ
+const campos = shotParams.get('campos')
+if (campos) {
+  const [x, y, z] = campos.split(',').map(Number)
+  if ([x, y, z].every((n) => !Number.isNaN(n))) camera.position.set(x, y, z)
+}
 applyLook()
 
 // 桌面拖拽模拟转头
@@ -121,7 +130,7 @@ attachDragLook(document.getElementById('phone')!, (yaw, pitch) => {
 // ---------- lil-gui 调参面板 ----------
 const gui = new GUI({ title: 'navi-arrow 调参' })
 const guiState = {
-  颜色: '#8EC5FF',
+  颜色: '#9DCEFF',
   带宽: navi.params.bandWidth,
   边缘光幕高: navi.params.railHeight,
   透明度: navi.params.opacity,
@@ -160,11 +169,11 @@ gui.add(guiState, '带宽', 0.6, 2.0, 0.05).onChange((v: number) => {
   navi.params.bandWidth = v
   navi.applyParams()
 })
-gui.add(guiState, '边缘光幕高', 0, 0.6, 0.05).onChange((v: number) => {
+gui.add(guiState, '边缘光幕高', 0, 0.8, 0.05).onChange((v: number) => {
   navi.params.railHeight = v
   navi.applyParams()
 })
-gui.add(guiState, '透明度', 0.15, 0.8, 0.05).onChange((v: number) => {
+gui.add(guiState, '透明度', 0.3, 1.6, 0.05).onChange((v: number) => {
   navi.params.opacity = v
   navi.applyParams()
 })
@@ -176,7 +185,7 @@ gui.add(guiState, '流动速度', 0.5, 6, 0.25).onChange((v: number) => {
   navi.params.flowSpeed = v
   navi.applyParams()
 })
-gui.add(guiState, 'bloom强度', 0, 2.5, 0.1).onChange((v: number) => {
+gui.add(guiState, 'bloom强度', 0, 0.6, 0.01).onChange((v: number) => {
   navi.params.bloomStrength = v
   navi.applyParams()
 })

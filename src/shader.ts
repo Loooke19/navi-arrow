@@ -1,25 +1,38 @@
 /**
- * 材质（REDO5）：
- * - 地面带 Band：加法混合、浅青（#8EC5FF→#BFE3FF），横向羽化、沿路渐隐、细横向扫描线、前进流动脉冲
- * - 边缘光幕 Rail：加法混合、竖直 α 顶 0.5 → 底 0.05、扫描线、近处淡入
- * 全部 AdditiveBlending —— 只会让照片更亮，绝不压暗。
+ * 光幕材质（光片，不是实体）：
+ * 全部 AdditiveBlending + depthWrite false。片元 rgb 是光的颜色，alpha 是光量，
+ * 帧缓冲里累加 color*alpha（黑底）。最终合成把这份光加到照片上，alpha 置 0，
+ * 所以只会提亮，绝不会压暗路面。
+ *
+ * uMode 0 地面带：中心约 0.16、向两侧余弦羽化到 0，沿程 1 → 0.3 → 0
+ * uMode 1 侧光幕：贴地约 0.35 收到顶边约 0.05，顶上再加一条屏幕空间细亮线
  */
 import * as THREE from 'three'
 
 const vert = /* glsl */ `
+  attribute float aTurn;
   uniform float uReveal;
   varying vec2 vUv;
   varying vec3 vWorldPos;
   varying float vDist;
+  varying float vFace;
+  varying float vTurn;
 
   void main() {
     vUv = uv;
+    vTurn = aTurn;
     vec3 p = position;
-    // 生长：沿路线由近到远展开
     float reveal = clamp(uReveal * 1.3 - vUv.x * 0.3, 0.0, 1.0);
-    p.y *= reveal;
+    // 近处把光幕压矮，避免贴着镜头的侧幕在屏幕上摊成一根粗管；
+    // 走到转弯（十几米外）才升到完整高度。
+    vec4 wp0 = modelMatrix * vec4(position, 1.0);
+    float dist0 = length(cameraPosition - wp0.xyz);
+    float rise = smoothstep(3.5, 14.0, dist0);
+    p.y *= reveal * mix(0.2, 1.0, rise);
     vec4 wp = modelMatrix * vec4(p, 1.0);
     vWorldPos = wp.xyz;
+    vec3 n = normalize(mat3(modelMatrix) * normal);
+    vFace = abs(dot(n, normalize(cameraPosition - wp.xyz)));
     vec4 mv = viewMatrix * wp;
     vDist = -mv.z;
     gl_Position = projectionMatrix * mv;
@@ -28,80 +41,123 @@ const vert = /* glsl */ `
 
 const frag = /* glsl */ `
   precision highp float;
-  uniform vec3 uColor;        // 近处颜色（浅青）
-  uniform vec3 uFarColor;     // 远处颜色（更白）
+  uniform vec3 uColor;
+  uniform vec3 uFarColor;
   uniform float uOpacity;
   uniform float uTime;
   uniform float uFlowSpeed;
   uniform float uScanLines;
   uniform float uReveal;
-  uniform float uMode;        // 0 = 地面带, 1 = 边缘光幕
+  uniform float uMode;
   varying vec2 vUv;
   varying vec3 vWorldPos;
   varying float vDist;
+  varying float vFace;
+  varying float vTurn;
 
   float hash(float n) { return fract(sin(n * 127.1) * 43758.5453); }
 
+  // 沿程：近 1.0 → 远 0.3 → 末端 0；脚下 2m 内柔和淡入
+  float routeFade(float along, float dist) {
+    float k = mix(1.0, 0.3, smoothstep(0.28, 0.78, along));
+    k *= 1.0 - smoothstep(0.78, 1.0, along);
+    // 脚下几米柔和淡入，底部不要切出一根亮边
+    k *= smoothstep(1.0, 3.8, dist);
+    return k;
+  }
+
   void main() {
-    // 距离渐隐（~60m 完全淡出）
-    float distFade = 1.0 - smoothstep(18.0, 60.0, vDist);
-    // 近处 1~2m 柔和淡入（避免脚下硬块）
-    float nearFade = smoothstep(0.3, 1.8, vDist);
+    float fade = routeFade(vUv.x, vDist);
+    float speed = max(uFlowSpeed, 0.25);
+    // 沿路线向前的柔光脉冲（只加亮，没有暗带）
+    float pulse = fract(vUv.x * 3.0 - uTime / speed);
+    pulse = smoothstep(0.0, 0.10, pulse) * smoothstep(0.32, 0.10, pulse);
+    pulse *= smoothstep(3.0, 6.5, vDist);
 
-    // 沿弧长的重复 UV（每 1m 一个循环），给扫描线与流动脉冲用
-    float along = vUv.x * 90.0;
-
-    // 前进流动脉冲（2.5s 一圈，沿路线往前跑 3 组）——窄而克制，避免大团过曝光斑
-    float pulse = fract(along / 30.0 - uTime / uFlowSpeed);
-    pulse = smoothstep(0.0, 0.03, pulse) * smoothstep(0.10, 0.04, pulse);
-
-    vec3 col;
+    vec3 nearCol = uColor;
+    vec3 farCol = uFarColor;
+    vec3 added;
     float a;
+
     if (uMode < 0.5) {
-      // ===== 地面带 =====
-      // 横向羽化：中心亮、两缘透明（平滑填充，无暗带）
-      float feather = smoothstep(0.0, 0.34, vUv.y) * smoothstep(1.0, 0.66, vUv.y);
-
-      // 细亮扫描线：接缝细（~8% 占空）→ 屏幕上 1~2px，只有提亮、没有暗间隙。
-      // 越远越密：用 1/(1+d) 使线距随距离收窄（近处稀疏、远处密集）。
-      float dens = mix(1.0, 2.6, clamp(along / 55.0, 0.0, 1.0));
-      float lineCoord = along * dens + uTime * 0.12;
-      float lineIdx = floor(lineCoord);
-      float jitter = (hash(lineIdx) - 0.5) * 0.35;
-      float ln = fract(lineCoord + jitter);
-      // 细亮线：宽度 ~0.08，边缘柔和，平滑进填充里
-      float thin = smoothstep(0.0, 0.045, ln) * smoothstep(0.085, 0.04, ln);
-      float brightJ = 0.7 + 0.3 * hash(lineIdx + 3.7);
-      float scan = thin * brightJ;
-
-      // 平滑半透明填充：近处略暗（透出路面纹理），远处稍弱
-      float fill = feather * mix(0.26, 0.07, clamp(vUv.x * 1.3, 0.0, 1.0));
-      a = fill * distFade * nearFade * uOpacity;
-      a += scan * feather * 0.09 * distFade * nearFade * uOpacity;   // 细亮线只比填充亮 ~25%
-      // 脉冲在近处淡出（避免脚下大团光斑），远处才明显
-      float pulseNear = smoothstep(2.5, 6.0, vDist);
-      a += pulse * feather * 0.10 * distFade * nearFade * pulseNear * uOpacity;
-      col = mix(uColor, uFarColor, pulse * 0.2 + vUv.x * 0.25);
-      col *= 1.0 + scan * 0.18 + pulse * 0.12 * pulseNear;   // 最大亮度远低于白
+      // ===== 地面光带：均匀浅填充，两侧软落到 0，没有硬边 =====
+      float across = abs(vUv.y - 0.5) * 2.0;
+      float feather = 0.5 + 0.5 * cos(across * 3.14159265);
+      float body = 0.17 * feather * fade * uOpacity;
+      body += pulse * 0.040 * feather * fade * uOpacity;
+      vec3 col = mix(nearCol, farCol, clamp(vUv.x * 0.55, 0.0, 1.0));
+      added = col * body;
+      a = body;
     } else {
-      // ===== 边缘光幕 =====
-      // 竖直渐变：顶部 0.6 → 底部 0.05（转弯处明显立起，直行时不过分抢眼）
-      float vertGrad = mix(0.05, 0.6, pow(vUv.y, 1.1));
-      float dens = mix(1.0, 2.2, clamp(along / 55.0, 0.0, 1.0));
-      float lineCoord = along * dens + uTime * 0.1;
-      float lineIdx = floor(lineCoord);
-      float ln = fract(lineCoord + (hash(lineIdx) - 0.5) * 0.3);
-      float thin = smoothstep(0.0, 0.05, ln) * smoothstep(0.10, 0.045, ln);
-      float brightJ = 0.7 + 0.3 * hash(lineIdx + 11.1);
-      float scan = 1.0 + thin * brightJ * 0.25;   // 细亮线，25% 对比
-      a = vertGrad * scan * distFade * nearFade * uOpacity;
-      a += pulse * 0.3 * distFade * nearFade * uOpacity;
-      // 顶沿更亮（形成细亮轨）
-      a += smoothstep(0.86, 1.0, vUv.y) * 0.5 * distFade * nearFade * uOpacity;
-      col = mix(uColor, uFarColor, smoothstep(0.5, 1.0, vUv.y) * 0.7 + pulse * 0.35);
+      // ===== 侧光幕 =====
+      // 贴地最亮 (~0.35) → 顶边几乎收尽 (~0.05)，然后再叠顶边细线
+      float t = smoothstep(0.0, 1.0, vUv.y);
+      float bodyI = mix(0.35, 0.05, t);
+
+      // 很淡的竖向纤维（沿高度不变、沿路线疏密变化），像一层光纱
+      float cells = mix(36.0, 80.0, clamp(uScanLines / 18.0, 0.0, 1.0));
+      float su = vUv.x * cells;
+      float id = floor(su);
+      float f = fract(su);
+      float n = hash(id);
+      float w = mix(0.10, 0.34, n);
+      float fiber = smoothstep(0.0, w * 0.5, f) * smoothstep(w, w * 0.45, f);
+      bodyI *= mix(0.88, 1.0, fiber);
+
+      // 顺着看（直行）只留一层很淡的纱，避免侧幕投影成粗边；
+      // 正面看到（转弯）才是完整的 0.35 光片。
+      float face = smoothstep(0.06, 0.48, vFace);
+      float faceK = mix(0.16, 1.0, face);
+      faceK = max(faceK, smoothstep(0.25, 0.85, vTurn));
+      // 转弯处光幕正面展开，比直行时的淡边更亮、更立得住
+      faceK *= mix(1.0, 1.45, smoothstep(0.35, 1.0, vTurn));
+      bodyI *= faceK;
+      bodyI *= fade * uOpacity;
+      bodyI += pulse * 0.05 * (1.0 - t) * fade * uOpacity;
+
+      // 顶边：屏幕空间 2~3px（近）收到更细（远），亮青白 + 软辉光
+      float fw = max(fwidth(vUv.y), 1e-4);
+      float px = (1.0 - vUv.y) / fw;
+      float farT = smoothstep(4.0, 48.0, vDist);
+      float corePx = mix(1.15, 0.38, farT);
+      float core = exp(-0.5 * (px / corePx) * (px / corePx));
+      float glowPx = corePx * 2.4;
+      float glow = exp(-0.5 * (px / max(glowPx, 0.8)) * (px / max(glowPx, 0.8)));
+      float lineI = (core * 0.55 + glow * 0.10) * fade * uOpacity;
+      lineI *= 1.0 + pulse * 0.22;
+
+      vec3 bodyCol = mix(nearCol, farCol, t * 0.35 + vUv.x * 0.25);
+      vec3 lineCol = vec3(0.78, 0.91, 1.0);
+      added = bodyCol * bodyI + lineCol * lineI;
+      a = bodyI + lineI;
     }
-    gl_FragColor = vec4(col, clamp(a, 0.0, 1.0));
-    if (gl_FragColor.a < 0.003) discard;
+
+    if (a < 0.004) discard;
+    gl_FragColor = vec4(added / max(a, 1e-4), clamp(a, 0.0, 1.0));
+  }
+`
+
+const chevronFrag = /* glsl */ `
+  precision highp float;
+  uniform vec3 uColor;
+  uniform float uOpacity;
+  uniform float uFade;
+  varying vec2 vUv;
+
+  void main() {
+    vec2 p = vec2(vUv.x * 2.0 - 1.0, vUv.y);
+    float ax = abs(p.x);
+    // 开口朝后、尖端朝前的软 V。中心亮，边缘化进透明，没有描边。
+    float ridge = mix(0.84, 0.18, smoothstep(0.0, 0.94, ax));
+    float d = abs(p.y - ridge);
+    float core = exp(-pow(d / 0.14, 2.0));
+    float soft = exp(-pow(d / 0.30, 2.0));
+    float arm = 1.0 - smoothstep(0.62, 1.02, ax);
+    float m = clamp((core * 0.72 + soft * 0.38) * arm, 0.0, 1.0);
+    float a = m * uOpacity * uFade;
+    vec3 col = mix(vec3(0.62, 0.82, 1.0), uColor, clamp(core, 0.0, 1.0));
+    if (a < 0.012) discard;
+    gl_FragColor = vec4(col, a);
   }
 `
 
@@ -114,6 +170,20 @@ export interface NaviUniforms {
   uScanLines: { value: number }
   uReveal: { value: number }
   uMode: { value: number }
+}
+
+function baseMaterial(uniforms: NaviUniforms): THREE.ShaderMaterial {
+  return new THREE.ShaderMaterial({
+    vertexShader: vert,
+    fragmentShader: frag,
+    uniforms: uniforms as any,
+    transparent: true,
+    depthWrite: false,
+    depthTest: false,
+    side: THREE.DoubleSide,
+    blending: THREE.AdditiveBlending,
+    toneMapped: false,
+  })
 }
 
 export function createBandMaterial(opts: {
@@ -133,15 +203,7 @@ export function createBandMaterial(opts: {
     uReveal: { value: 1 },
     uMode: { value: 0 },
   }
-  return new THREE.ShaderMaterial({
-    vertexShader: vert,
-    fragmentShader: frag,
-    uniforms: uniforms as any,
-    transparent: true,
-    depthWrite: false,
-    side: THREE.DoubleSide,
-    blending: THREE.AdditiveBlending, // 只加光，绝不压暗
-  })
+  return baseMaterial(uniforms)
 }
 
 export function createRailMaterial(opts: {
@@ -153,6 +215,31 @@ export function createRailMaterial(opts: {
   const m = createBandMaterial({ ...opts, scanLines: 12 })
   m.uniforms.uMode.value = 1
   return m
+}
+
+/** 贴地软 V。opacity 在 1 的设计强度下中心约为 0.6。 */
+export function createChevronMaterial(color: string, opacity = 0.6): THREE.ShaderMaterial {
+  return new THREE.ShaderMaterial({
+    uniforms: {
+      uColor: { value: new THREE.Color(color) },
+      uOpacity: { value: opacity },
+      uFade: { value: 1 },
+    },
+    vertexShader: /* glsl */ `
+      varying vec2 vUv;
+      void main() {
+        vUv = uv;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }
+    `,
+    fragmentShader: chevronFrag,
+    transparent: true,
+    depthWrite: false,
+    depthTest: false,
+    blending: THREE.AdditiveBlending,
+    toneMapped: false,
+    side: THREE.DoubleSide,
+  })
 }
 
 /** 兼容旧 API 名称 */

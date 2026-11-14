@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import * as THREE from 'three'
-import { normalizeRoute, buildRouteGeometry, buildBandGeometry, buildEdgeLinePoints, buildRailGeometry, pointAtDistance } from '../src/route'
+import { normalizeRoute, buildRouteGeometry, buildBandGeometry, buildEdgeLinePoints, buildRailGeometry, pointAtDistance, routeTurnFactors } from '../src/route'
 
 const route = [
   [0, 0],
@@ -68,6 +68,38 @@ describe('route geometry', () => {
       expect(Math.min(...ys)).toBeCloseTo(0, 5)
       expect(Math.max(...ys)).toBeCloseTo(h, 5)
     }
+  })
+
+  it('转弯处光幕被抬高，直行段保持基础高度', () => {
+    const straight = buildRouteGeometry(normalizeRoute([[0, 0], [0, -20], [0, -40]]), 4)
+    const factors = routeTurnFactors(straight)
+    expect(Math.max(...factors)).toBeLessThan(0.2)
+
+    const turning = buildRouteGeometry(normalizeRoute([
+      [0, 0],
+      [0, -30],
+      [7, -37],
+      [8.5, -47],
+      [9, -57],
+    ]), 4)
+    const turnF = routeTurnFactors(turning)
+    expect(Math.max(...turnF)).toBeGreaterThan(0.45)
+
+    const base = 0.5
+    const rail = buildRailGeometry(turning, 0.6, base, 1, 0.75)
+    const pos = rail.getAttribute('position') as THREE.BufferAttribute
+    let maxY = 0
+    let minTop = Infinity
+    for (let i = 0; i < pos.count; i++) {
+      const y = pos.getY(i)
+      expect(y).toBeGreaterThanOrEqual(-1e-6)
+      if (i % 2 === 1) {
+        maxY = Math.max(maxY, y)
+        minTop = Math.min(minTop, y)
+      }
+    }
+    expect(minTop).toBeGreaterThanOrEqual(base - 1e-4)
+    expect(maxY).toBeGreaterThan(base * 1.25)
   })
 
   it('pointAtDistance 沿线取样并夹在范围内', () => {

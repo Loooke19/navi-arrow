@@ -6,9 +6,6 @@ import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js'
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js'
 import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js'
-import { Line2 } from 'three/examples/jsm/lines/Line2.js'
-import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js'
-import { LineGeometry } from 'three/examples/jsm/lines/LineGeometry.js'
 import {
   DEFAULT_THEME,
   mergeOptions,
@@ -21,13 +18,12 @@ import {
   normalizeRoute,
   buildRouteGeometry,
   buildBandGeometry,
-  buildEdgeLinePoints,
   buildRailGeometry,
   buildGroundGridSegments,
   pointAtDistance,
   type RouteGeometry,
 } from './route'
-import { createBandMaterial, createRailMaterial } from './shader'
+import { createBandMaterial, createChevronMaterial, createRailMaterial } from './shader'
 
 const css = String.raw
 
@@ -181,7 +177,7 @@ const TURN_ICON = `<svg class="na-arrow-icon" viewBox="0 0 24 24" fill="#ffffff"
 export interface NaviArrowParams {
   /** 地面带宽度（米，GUI 0.6~2.0） */
   bandWidth: number
-  /** 边缘光幕高度（米，GUI 0~0.6） */
+  /** 边缘光幕高度（米，GUI 0~0.8），转弯处还会按曲率再抬高 */
   railHeight: number
   opacity: number
   flowSpeed: number
@@ -202,17 +198,12 @@ export class NaviArrowCore {
   private alphaPass?: ShaderPass
   private curtainMesh?: THREE.Mesh
   private curtainMat?: THREE.ShaderMaterial
-  private chevronMat?: THREE.MeshBasicMaterial
-  private chevronRimMat?: THREE.MeshBasicMaterial
+  private chevronMats: THREE.ShaderMaterial[] = []
   private bandMesh?: THREE.Mesh
   private bandMat?: THREE.ShaderMaterial
-  private edgeLines: Line2[] = []
-  private edgeMat?: LineMaterial
   private railMesh: THREE.Mesh[] = []
   private railMat?: THREE.ShaderMaterial
-  private lastBuilt = { bandWidth: 1.2, railHeight: 0.25 }
-  private topLine?: Line2
-  private topLineMat?: LineMaterial
+  private lastBuilt = { bandWidth: 1.2, railHeight: 0.5 }
   private groundMesh?: THREE.Mesh
   private groundMat?: THREE.ShaderMaterial
   private chevronGroup?: THREE.Group
@@ -241,11 +232,11 @@ export class NaviArrowCore {
     this.theme = { ...DEFAULT_THEME, ...(options.theme ?? {}) }
     this.params = {
       bandWidth: options.curtainWidth ?? 1.2,
-      railHeight: options.curtainHeight ?? 0.3,
+      railHeight: options.curtainHeight ?? 0.5,
       opacity: this.theme.nearOpacity,
       flowSpeed: options.flowSpeed ?? 2.5,
       scanLines: 12,
-      bloomStrength: 0.5,
+      bloomStrength: 0.04,
     }
     this.lastBuilt = { bandWidth: this.params.bandWidth, railHeight: this.params.railHeight }
     /** 地平线校准：背景图地平线（0..1 高度）与消失点 x（0..1 宽度） */
@@ -268,9 +259,17 @@ export class NaviArrowCore {
 
     // Three.js：alpha 透明叠加
     const glHost = root.querySelector('.na-gl') as HTMLElement
-    this.renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true, powerPreference: 'high-performance' })
+    this.renderer = new THREE.WebGLRenderer({
+      alpha: true,
+      antialias: false, // 后处理走 RenderTarget，MSAA 帮不上忙，省掉以保住 60fps
+      premultipliedAlpha: true,
+      powerPreference: 'high-performance',
+    })
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
     this.renderer.setClearColor(0x000000, 0)
+    this.renderer.toneMapping = THREE.NoToneMapping
+    // 画布本身不盖住背景：最终 pass 写出预乘光、alpha=0，由浏览器做加法合成
+    this.renderer.domElement.style.background = 'transparent'
     glHost.appendChild(this.renderer.domElement)
     this.scene = new THREE.Scene()
     this.camera = new THREE.PerspectiveCamera(60, 1, 0.05, 300)
@@ -296,7 +295,6 @@ export class NaviArrowCore {
     this.renderer.setSize(w, h, false)
     this.composer?.setSize(w, h)
     this.bloomPass?.setSize(w / 2, h / 2)
-    this.edgeMat?.resolution.set(w, h)
     this.camera.aspect = w / h
     this.camera.updateProjectionMatrix()
   }
@@ -304,28 +302,32 @@ export class NaviArrowCore {
   private setupComposer() {
     this.composer = new EffectComposer(this.renderer)
     this.composer.addPass(new RenderPass(this.scene, this.camera))
-    // bloom 半分辨率（移动端性能），低阈值只让顶线和流动带发光
-    this.bloomPass = new UnrealBloomPass(new THREE.Vector2(1, 1), this.params.bloomStrength, 0.4, 0.75)
+    // 半分辨率、低强度。阈值只放过顶边细线和箭头中心，地面填充不进 bloom。
+    this.bloomPass = new UnrealBloomPass(new THREE.Vector2(1, 1), this.params.bloomStrength, 0.15, 0.5)
     this.bloomPass.resolution = new THREE.Vector2(0.5, 0.5)
+    const hi = (this.bloomPass as any).highPassUniforms
+    if (hi?.smoothWidth) hi.smoothWidth.value = 0.08
     this.composer.addPass(this.bloomPass)
-    // 透明背景 alpha 修复：UnrealBloomPass 会把 alpha 重置为 1，
-    // 这里按亮度重建 alpha（发光叠加型 AR 的标准做法），让背景透出来。
-    const AlphaPreserveShader = {
+    // 预乘加法：rgb = 要加到照片上的光，alpha = 0 → 浏览器 result = rgb + photo，绝不压暗。
+    const AdditiveCompositeShader = {
       uniforms: { tDiffuse: { value: null } },
       vertexShader: `varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`,
       fragmentShader: `
         uniform sampler2D tDiffuse;
         varying vec2 vUv;
         void main() {
-          vec4 c = texture2D(tDiffuse, vUv);
-          float lum = max(c.r, max(c.g, c.b));
-          // 亮度越高的地方越不透明；纯黑（背景）完全透明
-          float a = smoothstep(0.0, 0.35, lum);
-          gl_FragColor = vec4(c.rgb, a);
+          vec3 light = max(texture2D(tDiffuse, vUv).rgb, vec3(0.0));
+          float lum = max(light.r, max(light.g, light.b));
+          light *= smoothstep(0.0, 0.01, lum);
+          gl_FragColor = vec4(light, 0.0);
         }
       `,
     }
-    this.alphaPass = new ShaderPass(AlphaPreserveShader)
+    this.alphaPass = new ShaderPass(AdditiveCompositeShader)
+    this.alphaPass.material.blending = THREE.NoBlending
+    this.alphaPass.material.transparent = false
+    this.alphaPass.material.depthTest = false
+    this.alphaPass.material.depthWrite = false
     this.composer.addPass(this.alphaPass)
     this.composer.renderToScreen = true
   }
@@ -386,33 +388,10 @@ export class NaviArrowCore {
     }
     this.bandMesh = new THREE.Mesh(buildBandGeometry(this.routeGeo, halfW), this.bandMat)
     this.bandMesh.frustumCulled = false
+    this.bandMesh.renderOrder = 1
     this.scene.add(this.bandMesh)
 
-    // 2. 两条亮边线（Line2 屏幕空间 ~2px）
-    if (!this.edgeMat) {
-      this.edgeMat = new LineMaterial({
-        color: new THREE.Color(this.theme.highlight),
-        linewidth: 2,
-        transparent: true,
-        opacity: 0.95,
-        depthWrite: false,
-        blending: THREE.AdditiveBlending,
-      })
-    }
-    this.edgeLines.forEach((l) => {
-      this.scene.remove(l)
-      l.geometry.dispose()
-    })
-    this.edgeLines = buildEdgeLinePoints(this.routeGeo, halfW).map((pts) => {
-      const lg = new LineGeometry()
-      lg.setPositions(pts.flatMap((p) => [p.x, p.y, p.z]))
-      const line = new Line2(lg, this.edgeMat)
-      line.frustumCulled = false
-      this.scene.add(line)
-      return line
-    })
-
-    // 3. 两条低矮边缘光幕
+    // 2. 两条低矮侧光幕（顶边细线在着色器里，不再画地面粗管）
     this.railMesh.forEach((m) => {
       this.scene.remove(m)
       m.geometry.dispose()
@@ -426,14 +405,18 @@ export class NaviArrowCore {
       })
     }
     this.railMesh = ([-1, 1] as const).map((side) => {
-      const m = new THREE.Mesh(buildRailGeometry(this.routeGeo!, halfW, this.params.railHeight, side), this.railMat)
+      const m = new THREE.Mesh(
+        buildRailGeometry(this.routeGeo!, halfW, this.params.railHeight, side, 1.05),
+        this.railMat,
+      )
       m.frustumCulled = false
+      m.renderOrder = 2
       this.scene.add(m)
       return m
     })
 
-    // 4. 平面滑动 V 形箭头（只在尚未创建时创建；setChevrons 控制开关）
-    if (this.opts.showChevrons !== false && !this.chevronGroup) this.rebuildChevrons()
+    // 3. 贴地软箭头（带宽变化时一起重做，保证宽度约为一半）
+    if (this.opts.showChevrons !== false) this.rebuildChevrons()
 
     this.revealStart = this.clock.getElapsedTime()
   }
@@ -448,7 +431,10 @@ export class NaviArrowCore {
       m.uniforms.uColor.value.set(this.theme.primary)
       m.uniforms.uFarColor.value.set(this.theme.highlight)
     }
-    if (this.edgeMat) this.edgeMat.color.set(this.theme.highlight)
+    for (const m of this.chevronMats) {
+      m.uniforms.uColor.value.set(this.theme.highlight)
+      m.uniforms.uOpacity.value = 0.6 * this.params.opacity
+    }
     if (this.bloomPass) this.bloomPass.strength = this.params.bloomStrength
     // 只有带宽/光幕高度变化才重建几何（可避免每帧重建）
     if (this.routeGeo && (this.lastBuilt.bandWidth !== this.params.bandWidth || this.lastBuilt.railHeight !== this.params.railHeight)) {
@@ -579,114 +565,50 @@ export class NaviArrowCore {
   }
 
   /**
-   * 平面滑动 V 形箭头（百度风格）：贴地在带内，沿路线平滑前移 + 淡入淡出。
-   * 形状：圆角 V 形，蓝色渐变填充 + 细白边（几何实现，不用纹理），
-   * 发光强度受控（亮度远低于白）、且不进入 bloom —— 避免过曝糊成一团。
-   * 全部箭头的位置在 render() 里按时间更新，不重建几何。
+   * 贴地软 V：宽度约为光带的一半，加法混合，中心亮、边缘化掉。
+   * 没有挤出厚度，也没有白描边。位置每帧沿路线前移，不重建几何。
    */
   private rebuildChevrons() {
-    if (this.chevronGroup) {
-      this.scene.remove(this.chevronGroup)
-      const mats = new Set<any>()
-      this.chevronGroup.children.forEach((m: any) => {
-        m.geometry?.dispose?.()
-        mats.add(m.material)
-      })
-      mats.forEach((m) => m.dispose())
-      this.chevronGroup = undefined
-    }
+    this.disposeChevrons()
     if (!this.routeGeo) return
 
+    const width = this.params.bandWidth * 0.5
+    const length = width * 0.78
+    const geo = new THREE.PlaneGeometry(width, length, 1, 1)
+    geo.rotateX(-Math.PI / 2)
+    geo.translate(0, 0.02, 0)
+
     const group = new THREE.Group()
-    // 圆角 V 形外轮廓（竖向 ±Y 平面，随后 rotateX 贴地）
-    const W = 0.21   // 半宽（整体约 0.42m 宽）
-    const D = 0.22   // V 的进深
-    const T = 0.075  // 笔画粗
-    const R = 0.04   // 圆角半径
-    const outer = roundedChevronPath(W, D, T, R, 0)
-    const inner = roundedChevronPath(W - T * 0.95, D, T * 0.95, R * 0.7, T * 0.55)
-    // 填充：外轮廓 + 内轮廓挖洞（挤出成有厚度的立体 V）
-    const shape = new THREE.Shape(outer)
-    shape.holes.push(new THREE.Path(inner.slice().reverse()))
-
-    // 细白边：沿外轮廓的窄带（外轮廓 - 略微内缩的轮廓）
-    const rimOuter = roundedChevronPath(W, D, T, R, 0)
-    const rimInnerPts = roundedChevronPath(W - 0.022, D, T - 0.022, Math.max(0.02, R - 0.02), 0.011)
-    const rimShape = new THREE.Shape(rimOuter)
-    rimShape.holes.push(new THREE.Path(rimInnerPts.slice().reverse()))
-    const rimGeo = new THREE.ShapeGeometry(rimShape, 8)
-
-    // 贴地 + 立体化：rim 仍为平面贴地亮边
-    const lay = (g: THREE.BufferGeometry) => {
-      g.rotateX(-Math.PI / 2)
-      g.translate(0, 0.012, 0)
-      return g
-    }
-    // 填充挤出薄厚度让箭头有侧壁、更立体可辨
-    const fillGeo = new THREE.ExtrudeGeometry(shape, {
-      depth: 0.05,
-      bevelEnabled: true,
-      bevelThickness: 0.02,
-      bevelSize: 0.018,
-      bevelSegments: 2,
-    })
-    fillGeo.rotateX(-Math.PI / 2)
-    fillGeo.translate(0, 0.035, 0)
-    lay(rimGeo)
-
-    // 蓝色渐变填充：用顶点色（顶点端亮、开口端稍深）——挤出后有侧面，顶点色让顶面亮侧面暗。
-    const positions = fillGeo.getAttribute('position')
-    const colors = new Float32Array(positions.count * 3)
-    const cTop = new THREE.Color('#5AA2FF')   // 顶面亮蓝（亮度低于 bloom 阈值）
-    const cBottom = new THREE.Color('#2E6BC8') // 侧面暗蓝
-    let minY = Infinity, maxY = -Infinity
-    for (let i = 0; i < positions.count; i++) {
-      minY = Math.min(minY, positions.getY(i))
-      maxY = Math.max(maxY, positions.getY(i))
-    }
-    const span = Math.max(1e-6, maxY - minY)
-    for (let i = 0; i < positions.count; i++) {
-      const t = (positions.getY(i) - minY) / span // 0 底（侧面）→ 1 顶（顶面）
-      const c = cBottom.clone().lerp(cTop, t)
-      colors[i * 3] = c.r
-      colors[i * 3 + 1] = c.g
-      colors[i * 3 + 2] = c.b
-    }
-    fillGeo.setAttribute('color', new THREE.BufferAttribute(colors, 3))
-
-    const fillMat = new THREE.MeshBasicMaterial({
-      vertexColors: true,
-      transparent: true,
-      opacity: 0.85,
-      depthWrite: false,
-      // 注意：不用 AdditiveBlending —— 保持可辨识的实心蓝 V，不会过曝
-      blending: THREE.NormalBlending,
-    })
-    const rimMat = new THREE.MeshBasicMaterial({
-      color: new THREE.Color('#D8EBFF'), // 明亮但低于 bloom 阈值（避免过曝糊团）
-      transparent: true,
-      opacity: 0.95,
-      depthWrite: false,
-      blending: THREE.NormalBlending,
-    })
-    this.chevronMat = fillMat
-    this.chevronRimMat = rimMat
-
     const count = this.opts.chevronCount ?? 3
+    this.chevronMats = []
     for (let i = 0; i < count; i++) {
-      const item = new THREE.Group()
-      const fill = new THREE.Mesh(fillGeo, fillMat)
-      const rim = new THREE.Mesh(rimGeo, rimMat)
-      rim.renderOrder = 1
-      fill.layers.set(1)
-      rim.layers.set(1)
-      item.add(fill, rim)
-      item.userData.slot = i
-      group.add(item)
+      const mat = createChevronMaterial(this.theme.highlight, 0.6 * this.params.opacity)
+      this.chevronMats.push(mat)
+      const mesh = new THREE.Mesh(geo, mat)
+      mesh.frustumCulled = false
+      mesh.renderOrder = 3
+      mesh.userData.slot = i
+      group.add(mesh)
     }
+    group.userData.count = count
     this.chevronGroup = group
-    this.chevronGroup.userData.count = count
     this.scene.add(group)
+  }
+
+  private disposeChevrons() {
+    if (!this.chevronGroup) {
+      this.chevronMats = []
+      return
+    }
+    this.scene.remove(this.chevronGroup)
+    const geos = new Set<THREE.BufferGeometry>()
+    this.chevronGroup.children.forEach((m: any) => {
+      if (m.geometry) geos.add(m.geometry)
+      m.material?.dispose?.()
+    })
+    geos.forEach((g) => g.dispose())
+    this.chevronGroup = undefined
+    this.chevronMats = []
   }
 
   /** 每帧更新箭头位置（沿路线滑行，间距 3m，2.5s 一循环） */
@@ -695,21 +617,19 @@ export class NaviArrowCore {
     const count = this.chevronGroup.userData.count as number
     const spacing = 3
     const cycle = spacing * count
-    const speed = cycle / 2.5 // m/s，对应 2.5s 一循环
+    const speed = cycle / 2.5
     const total = this.routeGeo.total
-    this.chevronGroup.children.forEach((item: any, i: number) => {
-      const base = ((i * spacing + t * speed) % cycle)
-      const dist = 2.0 + base
+    this.chevronGroup.children.forEach((mesh: any, i: number) => {
+      const base = (i * spacing + t * speed) % cycle
+      const dist = 2.2 + base
       const p = pointAtDistance(this.routeGeo!, dist)
-      const ahead = pointAtDistance(this.routeGeo!, dist + 0.4)
-      item.position.set(p.x, 0, p.z)
-      item.lookAt(ahead.x, 0, ahead.z)
-      // 近处/远处两端淡入淡出，避免跳变
-      const fadeIn = Math.min(1, dist / 2.5)
-      const fadeOut = Math.min(1, Math.max(0, (total - dist) / 6))
-      const k = fadeIn * fadeOut
-      if (this.chevronMat) this.chevronMat.opacity = 0.85 * k
-      if (this.chevronRimMat) this.chevronRimMat.opacity = 0.9 * k
+      const ahead = pointAtDistance(this.routeGeo!, dist + 0.45)
+      mesh.position.set(p.x, 0, p.z)
+      mesh.lookAt(ahead.x, 0, ahead.z)
+      const fadeIn = Math.min(1, dist / 2.4)
+      const fadeOut = Math.min(1, Math.max(0, (total - dist) / 8))
+      const mat = mesh.material as THREE.ShaderMaterial
+      if (mat?.uniforms?.uFade) mat.uniforms.uFade.value = fadeIn * fadeOut
     })
   }
 
@@ -717,18 +637,8 @@ export class NaviArrowCore {
   setChevrons(enabled: boolean) {
     if (this.opts.showChevrons === enabled) return
     this.opts.showChevrons = enabled
-    if (enabled) {
-      this.rebuildChevrons()
-    } else if (this.chevronGroup) {
-      this.scene.remove(this.chevronGroup)
-      this.chevronGroup.children.forEach((item: any) => {
-        item.children?.forEach((m: any) => {
-          m.geometry?.dispose?.()
-          m.material?.dispose?.()
-        })
-      })
-      this.chevronGroup = undefined
-    }
+    if (enabled) this.rebuildChevrons()
+    else this.disposeChevrons()
   }
 
   /** 外部传入相机位姿（AR 引擎/设备方向） */
@@ -829,20 +739,8 @@ export class NaviArrowCore {
       }
     }
     this.updateChevrons(t)
-    if (this.composer) {
-      // 箭头不参与 bloom：主 pass 用 layer 0（箭头在 layer 1），
-      // composer 输出后再把箭头直接叠画上去（NormalBlending，清晰锐利）。
-      const cam = this.camera as any
-      cam.layers.disable(1)
-      this.composer.render()
-      cam.layers.enable(1)
-      if (this.chevronGroup) {
-        this.renderer.autoClear = false
-        this.renderer.clearDepth()
-        this.renderer.render(this.scene, this.camera)
-        this.renderer.autoClear = true
-      }
-    } else this.renderer.render(this.scene, this.camera)
+    if (this.composer) this.composer.render()
+    else this.renderer.render(this.scene, this.camera)
   }
 
   /** 释放全部 GPU 资源 */
@@ -856,14 +754,12 @@ export class NaviArrowCore {
       mats.forEach((m: any) => m?.dispose?.())
     }
     if (this.bandMesh) disposeGeoMat(this.bandMesh)
-    this.edgeLines.forEach(disposeGeoMat)
     this.railMesh.forEach(disposeGeoMat)
     if (this.groundMesh) disposeGeoMat(this.groundMesh)
     if (this.groundGrid) disposeGeoMat(this.groundGrid)
-    this.chevronGroup?.children.forEach(disposeGeoMat)
+    this.disposeChevrons()
     this.bandMat?.dispose()
     this.railMat?.dispose()
-    this.edgeMat?.dispose()
     this.bloomPass?.dispose?.()
     this.composer?.dispose?.()
     this.renderer.dispose()
@@ -875,62 +771,6 @@ export class NaviArrowCore {
 
 function escapeHtml(s: string): string {
   return s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!))
-}
-
-/**
- * 圆角 V 形（V 字母）轮廓点：开口朝上（+Y），尖端朝下（-Y）。
- * W = 半宽，D = 进深，T = 笔画粗，R = 圆角半径，inset = 沿笔画向内缩（用于画细边带）。
- * 返回闭合多边形点（THREE.Vector2 数组，便于在 Shape / Path 里复用）。
- */
-function roundedChevronPath(W: number, D: number, T: number, R: number, inset: number): THREE.Vector2[] {
-  const w = Math.max(0.01, W - inset)
-  const t = Math.max(0.008, T - inset * 2)
-  const r = Math.max(0.004, R - inset)
-  const d = D
-  const v2 = (x: number, y: number) => new THREE.Vector2(x, y)
-  // 关键点：左上、尖底、右上（外沿）；再折回内沿
-  const pts: THREE.Vector2[] = []
-  // 外沿：左端 → 向下 → 尖底 → 向上 → 右端
-  pts.push(v2(-w, d / 2))
-  pts.push(v2(0, -d / 2))
-  pts.push(v2(w, d / 2))
-  // 右上端（内沿往回）
-  pts.push(v2(w, d / 2 - t))
-  // 内侧尖底（抬高 t*1.5，让 V 有厚度）
-  pts.push(v2(0, -d / 2 + t * 1.6))
-  pts.push(v2(-w, d / 2 - t))
-  return roundPolygon(pts, r)
-}
-
-/** 对多边形每个顶点做圆角（在相邻边之间插入圆弧点） */
-function roundPolygon(pts: THREE.Vector2[], radius: number): THREE.Vector2[] {
-  if (radius <= 1e-5 || pts.length < 3) return pts
-  const out: THREE.Vector2[] = []
-  for (let i = 0; i < pts.length; i++) {
-    const prev = pts[(i - 1 + pts.length) % pts.length]
-    const cur = pts[i]
-    const next = pts[(i + 1) % pts.length]
-    const dirA = prev.clone().sub(cur)
-    const dirB = next.clone().sub(cur)
-    const lenA = dirA.length()
-    const lenB = dirB.length()
-    if (lenA < 1e-5 || lenB < 1e-5) {
-      out.push(cur.clone())
-      continue
-    }
-    dirA.normalize()
-    dirB.normalize()
-    const rr = Math.min(radius, lenA * 0.45, lenB * 0.45)
-    const a = cur.clone().addScaledVector(dirA, rr)
-    const b = cur.clone().addScaledVector(dirB, rr)
-    out.push(a)
-    // 用两个中间点近似圆弧
-    const mid1 = a.clone().lerp(cur, 0.5)
-    const mid2 = b.clone().lerp(cur, 0.5)
-    out.push(mid1, mid2)
-    out.push(b)
-  }
-  return out
 }
 
 /** 框架无关入口 */

@@ -20,7 +20,7 @@ export class NaviArrowElement extends HTMLElement {
     }
     this.core = createNaviArrow(this, {
       route,
-      curtainHeight: num(this.getAttribute('curtain-height'), 0.4),
+      curtainHeight: num(this.getAttribute('curtain-height'), 0.5),
       curtainWidth: num(this.getAttribute('curtain-width'), 0.8),
       showChevrons: this.getAttribute('chevrons') === 'true',
       banner: {
