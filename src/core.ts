@@ -386,7 +386,7 @@ export class NaviArrowCore {
         scanLines: this.params.scanLines,
       })
     }
-    const wallH = Math.min(0.6, Math.max(0.4, this.params.railHeight || 0.55))
+    const wallH = Math.min(0.85, Math.max(0.55, this.params.railHeight || 0.72))
     this.bandMesh = new THREE.Mesh(buildChannelGeometry(this.routeGeo, halfW, wallH), this.bandMat)
     this.bandMesh.frustumCulled = false
     this.bandMesh.renderOrder = 1
@@ -591,7 +591,7 @@ export class NaviArrowCore {
   private updateChevrons(t: number) {
     if (!this.chevronGroup || !this.routeGeo) return
     const count = this.chevronGroup.userData.count as number
-    const spacing = 3
+    const spacing = 6
     const cycle = spacing * count
     const speed = cycle / 2.5
     const total = this.routeGeo.total

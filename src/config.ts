@@ -15,10 +15,10 @@ export interface NaviTheme {
 }
 
 export const DEFAULT_THEME: NaviTheme = {
-  /** 饱和青蓝，地面光带主色 */
-  primary: '#3AA0FF',
-  /** 略浅的青蓝，远处和顶边，仍然是蓝色不是白 */
-  highlight: '#66C8FF',
+  /** 偏青的青蓝，叠在暖色照片上仍是青色而不是紫 */
+  primary: '#40D8FF',
+  /** 稍浅的青，红通道仍然压得很低 */
+  highlight: '#7AEEFF',
   /** 1 = 设计强度：地面带中心约 0.34，转弯光幕贴地约 0.45 */
   nearOpacity: 1,
   farOpacity: 0.35,

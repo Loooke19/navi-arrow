@@ -231,26 +231,27 @@ export function buildChannelGeometry(geo: RouteGeometry, halfWidth: number, heig
   const positions: number[] = []
   const uvs: number[] = []
   const rims: number[] = []
+  const walls: number[] = []
   const indices: number[] = []
   const n = geo.points.length
   const up = new THREE.Vector3(0, 1, 0)
 
-  const push = (x: number, y: number, z: number, u: number, v: number, rim: number) => {
+  const push = (x: number, y: number, z: number, u: number, v: number, rim: number, wall: number) => {
     positions.push(x, y, z)
     uvs.push(u, v)
     rims.push(rim)
+    walls.push(wall)
     return (positions.length / 3) - 1
   }
 
-  // t: 0 左顶缘 → 1 右顶缘。中间贴地，两侧用 1-cos 圆角抬起，到顶缘时切线接近竖直。
+  // 平底占中间约 70%，外侧用四分之一圆角立起，顶缘接近竖直，墙面在屏幕上是一条带子而不是一条线。
   const sampleProfile = (t: number) => {
     const x = t * 2 - 1
     const ax = Math.abs(x)
-    const u = THREE.MathUtils.clamp((ax - 0.52) / 0.48, 0, 1)
-    const s = u * u * (3 - 2 * u)
-    const y = height * (1 - Math.cos(s * Math.PI / 2))
-    const rim = ax > 0.94 ? (ax - 0.94) / 0.06 : 0
-    return { lat: x * halfWidth, y, rim }
+    const u = THREE.MathUtils.clamp((ax - 0.70) / 0.30, 0, 1)
+    const y = height * (1 - Math.cos(u * Math.PI / 2))
+    const rim = ax > 0.96 ? (ax - 0.96) / 0.04 : 0
+    return { lat: x * halfWidth, y, rim, wall: u }
   }
 
   const rowAt = (origin: THREE.Vector3, side: THREE.Vector3, uAlong: number) => {
@@ -259,7 +260,7 @@ export function buildChannelGeometry(geo: RouteGeometry, halfWidth: number, heig
       const t = j / (cols - 1)
       const pr = sampleProfile(t)
       const p = origin.clone().addScaledVector(side, pr.lat)
-      row.push(push(p.x, pr.y, p.z, uAlong, t, pr.rim))
+      row.push(push(p.x, pr.y, p.z, uAlong, t, pr.rim, pr.wall))
     }
     return row
   }
@@ -291,12 +292,11 @@ export function buildChannelGeometry(geo: RouteGeometry, halfWidth: number, heig
     const row: number[] = []
     for (let j = 0; j < cols; j++) {
       const radialT = j / (cols - 1)
-      const uRise = THREE.MathUtils.clamp((radialT - 0.52) / 0.48, 0, 1)
-      const s = uRise * uRise * (3 - 2 * uRise)
-      const y = height * (1 - Math.cos(s * Math.PI / 2))
-      const rim = radialT > 0.94 ? (radialT - 0.94) / 0.06 : 0
+      const uRise = THREE.MathUtils.clamp((radialT - 0.70) / 0.30, 0, 1)
+      const y = height * (1 - Math.cos(uRise * Math.PI / 2))
+      const rim = radialT > 0.96 ? (radialT - 0.96) / 0.04 : 0
       const p = end.clone().addScaledVector(dir, radialT * halfWidth)
-      row.push(push(p.x, y, p.z, u, radialT, rim))
+      row.push(push(p.x, y, p.z, u, radialT, rim, uRise))
     }
     if (k > 0) linkRows(prevRim, row)
     for (let j = 0; j < row.length; j++) prevRim[j] = row[j]
@@ -306,6 +306,7 @@ export function buildChannelGeometry(geo: RouteGeometry, halfWidth: number, heig
   g.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
   g.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2))
   g.setAttribute('aRim', new THREE.Float32BufferAttribute(rims, 1))
+  g.setAttribute('aWall', new THREE.Float32BufferAttribute(walls, 1))
   g.setIndex(indices)
   g.computeVertexNormals()
   return g

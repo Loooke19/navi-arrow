@@ -77,15 +77,15 @@ btnPhoto.addEventListener('click', exitCameraMode)
 const navi = createNaviArrow(document.getElementById('navi') as HTMLElement, {
   route: [
     [0, 0],
-    [0, -5],
-    [0, -9],
-    [0.25, -10.6],
-    [1.15, -11.5],  // 右转，通道跟着弯
-    [2.15, -12.1],
-    [2.7, -12.7],   // 末端圆弧收口，仍留在画面里
+    [0, -18],
+    [0, -30],       // 长直线，透视收到地平线附近
+    [0.5, -34],
+    [2.2, -36.5],   // 远端开始右转
+    [4.6, -38.2],
+    [6.6, -39.6],   // 收口在画面中右、地平线下方
   ],
-  curtainHeight: 0.55,
-  curtainWidth: 1.7,
+  curtainHeight: 0.72,
+  curtainWidth: 2.1,
   showChevrons: true,
   autoRender: false,
   banner: { distance: '20米后', action: '进入', road: '无名路' },
@@ -132,7 +132,7 @@ attachDragLook(document.getElementById('phone')!, (yaw, pitch) => {
 // ---------- lil-gui 调参面板 ----------
 const gui = new GUI({ title: 'navi-arrow 调参' })
 const guiState = {
-  颜色: '#3AA0FF',
+  颜色: '#40D8FF',
   带宽: navi.params.bandWidth,
   边缘光幕高: navi.params.railHeight,
   透明度: navi.params.opacity,
@@ -167,7 +167,7 @@ gui.addColor(guiState, '颜色').onChange((v: string) => {
   ;(navi as any).theme.primary = v
   navi.applyParams()
 })
-gui.add(guiState, '带宽', 0.6, 2.0, 0.05).onChange((v: number) => {
+gui.add(guiState, '带宽', 0.8, 2.6, 0.05).onChange((v: number) => {
   navi.params.bandWidth = v
   navi.applyParams()
 })

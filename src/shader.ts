@@ -11,16 +11,19 @@ import * as THREE from 'three'
 
 const vert = /* glsl */ `
   attribute float aRim;
+  attribute float aWall;
   uniform float uReveal;
   varying vec2 vUv;
   varying vec3 vWorldPos;
   varying vec3 vNormal;
   varying float vDist;
   varying float vRim;
+  varying float vWall;
 
   void main() {
     vUv = uv;
     vRim = aRim;
+    vWall = aWall;
     vec3 p = position;
     float reveal = clamp(uReveal * 1.25 - vUv.x * 0.25, 0.0, 1.0);
     p.y *= reveal;
@@ -45,24 +48,29 @@ const frag = /* glsl */ `
   varying vec3 vNormal;
   varying float vDist;
   varying float vRim;
+  varying float vWall;
 
   void main() {
-    float fade = mix(1.0, 0.62, smoothstep(0.5, 0.9, vUv.x));
-    fade *= smoothstep(0.45, 2.2, vDist);
+    // 几何透视负责变窄，这里只在贴着镜头时淡入，远端仍保持可见
+    float fade = mix(1.0, 0.78, smoothstep(0.72, 1.0, vUv.x));
+    fade *= smoothstep(0.35, 1.8, vDist);
     vec3 N = normalize(vNormal);
     vec3 V = normalize(cameraPosition - vWorldPos);
-    float fres = pow(1.0 - clamp(abs(dot(N, V)), 0.0, 1.0), 1.7);
-    float body = 0.18 * (0.58 + 0.75 * fres) * fade * uOpacity;
-    vec3 col = mix(uColor, uFarColor, clamp(vUv.x * 0.4 + fres * 0.06, 0.0, 1.0));
+    float fres = pow(1.0 - clamp(abs(dot(N, V)), 0.0, 1.0), 1.45);
+    // 槽底很淡，墙的内侧面更亮，通道才像一条槽
+    float floorA = 0.055 * fade * uOpacity * (0.75 + 0.25 * fres);
+    float wallA = 0.30 * fade * uOpacity * (0.55 + 0.95 * fres);
+    float body = mix(floorA, wallA, smoothstep(0.08, 0.72, vWall));
+    vec3 col = mix(uColor, uFarColor, clamp(vUv.x * 0.35, 0.0, 1.0));
 
     float fw = max(fwidth(vRim), 1e-4);
     float px = (1.0 - vRim) / fw;
-    float farT = smoothstep(3.0, 26.0, vDist);
-    float corePx = mix(1.7, 0.75, farT);
+    float farT = smoothstep(4.0, 40.0, vDist);
+    float corePx = mix(1.5, 0.85, farT);
     float line = exp(-0.5 * (px / corePx) * (px / corePx));
-    line *= smoothstep(0.4, 0.9, vRim);
-    float lineI = line * 0.78 * fade * uOpacity;
-    vec3 lineCol = mix(uColor, vec3(0.42, 0.80, 1.0), 0.62);
+    line *= smoothstep(0.45, 0.92, vRim);
+    float lineI = line * 0.7 * fade * uOpacity;
+    vec3 lineCol = vec3(0.40, 0.94, 1.0);
 
     float a = body + lineI;
     if (a < 0.004) discard;
@@ -112,7 +120,7 @@ const chevronFrag = /* glsl */ `
     // 翼端稍微化开，避免切成一根硬棒
     m *= 1.0 - smoothstep(0.82, 1.0, t);
     float a = m * uOpacity * uFade;
-    vec3 col = mix(uColor, vec3(0.75, 0.91, 1.0), clamp(core, 0.0, 1.0));
+    vec3 col = mix(uColor, vec3(0.62, 0.96, 1.0), clamp(core, 0.0, 1.0));
     if (a < 0.02) discard;
     gl_FragColor = vec4(col, a);
   }
