@@ -48,6 +48,28 @@ for (let y = y0; y < y1; y++) {
   }
 }
 
+// 槽底：每一行遮罩的中间 50%，不含两侧亮边。上次 +25 几乎全是边线。
+const interior = new Uint8Array(w * h)
+let interiorN = 0
+for (let y = y0; y < y1; y++) {
+  let minX = w
+  let maxX = -1
+  for (let x = 0; x < w; x++) {
+    if (!mask[y * w + x]) continue
+    if (x < minX) minX = x
+    if (x > maxX) maxX = x
+  }
+  const span = maxX - minX
+  if (span < 10) continue
+  const x0 = Math.round(minX + span * 0.28)
+  const x1 = Math.round(maxX - span * 0.28)
+  for (let x = x0; x <= x1; x++) {
+    if (!mask[y * w + x]) continue
+    interior[y * w + x] = 1
+    interiorN++
+  }
+}
+const floor = evaluateGlow(withRoute.data, photo.data, w, h, interior)
 const result = evaluateGlow(withRoute.data, photo.data, w, h, mask)
 const out = {
   ...result,
@@ -61,11 +83,16 @@ const out = {
   bluePhoto: +result.bluePhoto.toFixed(2),
   blueDelta: +result.blueDelta.toFixed(2),
   marked,
+  floorSamples: floor.samples,
+  floorLumaDelta: +floor.lumaDelta.toFixed(2),
+  floorBlueDelta: +floor.blueDelta.toFixed(2),
+  floorContrast: +floor.contrastRatio.toFixed(3),
 }
 console.log(JSON.stringify(out))
 
 mkdirSync('docs/compare', { recursive: true })
-if (!(result.lumaOK && result.contrastOK && result.blueOK && marked > 400)) {
-  console.error('FAIL: 光带压暗了照片、盖住了路面、几乎不可见，或不够蓝')
+const floorOK = floor.samples > 400 && floor.lumaDelta >= 6 && floor.blueDelta >= 18 && floor.contrastOK
+if (!(result.lumaOK && result.contrastOK && result.blueOK && marked > 400 && floorOK)) {
+  console.error('FAIL: 光带压暗了照片、盖住了路面、槽底几乎不可见，或不够蓝')
   process.exitCode = 1
 }

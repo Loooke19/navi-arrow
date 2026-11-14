@@ -43,6 +43,7 @@ const frag = /* glsl */ `
   uniform float uOpacity;
   uniform float uTime;
   uniform float uFlowSpeed;
+  uniform float uFloorGain;
   varying vec2 vUv;
   varying vec3 vWorldPos;
   varying vec3 vNormal;
@@ -58,7 +59,7 @@ const frag = /* glsl */ `
     vec3 V = normalize(cameraPosition - vWorldPos);
     float fres = pow(1.0 - clamp(abs(dot(N, V)), 0.0, 1.0), 1.45);
     // 槽底很淡，墙的内侧面更亮，通道才像一条槽
-    float floorA = 0.16 * fade * uOpacity * (0.85 + 0.15 * fres);
+    float floorA = 0.16 * uFloorGain * fade * uOpacity * (0.9 + 0.1 * fres);
     // 墙比上一版大约暗 40%，和槽底连成一块柔光，而不是两根发亮的轨
     float wallA = 0.12 * fade * uOpacity * (0.7 + 0.4 * fres);
     float body = mix(floorA, wallA, smoothstep(0.12, 0.8, vWall));
@@ -114,16 +115,17 @@ const chevronFrag = /* glsl */ `
     float t = dR < dL ? segT(p, tip, wingR) : segT(p, tip, wingL);
     float d = min(dR, dL);
     // 臂宽约为箭头宽度的 0.25；尖端收细，开口保持利落的 V
-    float rad = mix(uWidth * 0.045, uWidth * 0.125, smoothstep(0.0, 0.28, t));
-    float core = 1.0 - smoothstep(rad * 0.42, rad * 0.95, d);
-    float soft = 1.0 - smoothstep(rad * 0.7, rad * 1.55, d);
-    float m = max(core, soft * 0.62);
-    // 翼端稍微化开，避免切成一根硬棒
-    m *= 1.0 - smoothstep(0.82, 1.0, t);
-    float a = m * uOpacity * uFade;
-    vec3 col = mix(uColor, vec3(0.62, 0.96, 1.0), clamp(core, 0.0, 1.0));
-    if (a < 0.02) discard;
-    gl_FragColor = vec4(col, a);
+    // 臂稍加粗，边缘收紧，远看仍是一个清楚的 V，不是一团光
+    float rad = mix(uWidth * 0.07, uWidth * 0.16, smoothstep(0.0, 0.3, t));
+    float core = 1.0 - smoothstep(rad * 0.55, rad * 1.02, d);
+    float soft = 1.0 - smoothstep(rad * 0.9, rad * 1.28, d);
+    float m = max(core, soft * 0.28);
+    m *= 1.0 - smoothstep(0.86, 1.0, t);
+    float cover = m * uFade;
+    if (cover < 0.02) discard;
+    vec3 col = mix(uColor, vec3(0.55, 0.98, 1.0), clamp(core, 0.0, 1.0));
+    // rgb 继续加法；alpha 让白地板上红通道降下来，V 才不会被裁成纯白
+    gl_FragColor = vec4(col * cover * uOpacity, cover * 0.5);
   }
 `
 
@@ -136,6 +138,7 @@ export interface NaviUniforms {
   uScanLines: { value: number }
   uReveal: { value: number }
   uMode: { value: number }
+  uFloorGain: { value: number }
 }
 
 function baseMaterial(uniforms: NaviUniforms): THREE.ShaderMaterial {
@@ -210,6 +213,7 @@ export function createBandMaterial(opts: {
     uScanLines: { value: opts.scanLines },
     uReveal: { value: 1 },
     uMode: { value: 0 },
+    uFloorGain: { value: 1 },
   }
   return baseMaterial(uniforms)
 }
@@ -251,12 +255,73 @@ export function createChevronMaterial(color: string, opacity = 1.05, size?: { wi
     depthTest: false,
     blending: THREE.CustomBlending,
     blendEquation: THREE.AddEquation,
-    blendSrc: THREE.SrcAlphaFactor,
+    blendSrc: THREE.OneFactor,
     blendDst: THREE.OneFactor,
-    blendSrcAlpha: THREE.ZeroFactor,
+    blendSrcAlpha: THREE.OneFactor,
     blendDstAlpha: THREE.OneFactor,
     toneMapped: false,
     side: THREE.DoubleSide,
+  })
+}
+
+/**
+ * 转弯处立着的半透明标牌：对着镜头，中间一个指向转弯方向的 V。
+ * rgb 加法，alpha 只压在箭头和淡幕上，亮背景上也能看出青色。
+ */
+export function createTurnSignMaterial(color = '#00C8FF'): THREE.ShaderMaterial {
+  return new THREE.ShaderMaterial({
+    uniforms: {
+      uColor: { value: new THREE.Color(color) },
+      uOpacity: { value: 1 },
+      uDir: { value: 1 },
+    },
+    vertexShader: /* glsl */ `
+      varying vec2 vUv;
+      void main() {
+        vUv = uv;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }
+    `,
+    fragmentShader: /* glsl */ `
+      precision highp float;
+      uniform vec3 uColor;
+      uniform float uOpacity;
+      uniform float uDir;
+      varying vec2 vUv;
+
+      float segDist(vec2 p, vec2 a, vec2 b) {
+        vec2 ab = b - a;
+        float t = clamp(dot(p - a, ab) / max(dot(ab, ab), 1e-6), 0.0, 1.0);
+        return length(p - a - ab * t);
+      }
+
+      void main() {
+        vec2 p = vUv - 0.5;
+        p.x *= uDir;
+        float panel = smoothstep(0.52, 0.30, length(p * vec2(1.05, 1.15)));
+        vec2 tip = vec2(0.20, 0.0);
+        vec2 wingU = vec2(-0.18, 0.30);
+        vec2 wingD = vec2(-0.18, -0.30);
+        float d = min(segDist(p, tip, wingU), segDist(p, tip, wingD));
+        float arrow = 1.0 - smoothstep(0.07, 0.125, d);
+        float ink = max(panel * 0.22, arrow * 0.62) * uOpacity;
+        float glow = (panel * 0.28 + arrow * 1.15) * uOpacity;
+        if (ink < 0.015) discard;
+        vec3 col = mix(uColor, vec3(0.62, 0.98, 1.0), clamp(arrow, 0.0, 1.0));
+        gl_FragColor = vec4(col * glow, ink);
+      }
+    `,
+    transparent: true,
+    depthWrite: false,
+    depthTest: false,
+    side: THREE.DoubleSide,
+    blending: THREE.CustomBlending,
+    blendEquation: THREE.AddEquation,
+    blendSrc: THREE.OneFactor,
+    blendDst: THREE.OneFactor,
+    blendSrcAlpha: THREE.OneFactor,
+    blendDstAlpha: THREE.OneFactor,
+    toneMapped: false,
   })
 }
 

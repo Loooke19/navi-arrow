@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import * as THREE from 'three'
-import { normalizeRoute, buildRouteGeometry, buildBandGeometry, buildEdgeLinePoints, buildRailGeometry, buildChannelGeometry, pointAtDistance, routeTurnFactors } from '../src/route'
+import { normalizeRoute, buildRouteGeometry, buildBandGeometry, buildEdgeLinePoints, buildRailGeometry, buildChannelGeometry, pointAtDistance, routeTurnFactors, bendAnchor } from '../src/route'
 
 const route = [
   [0, 0],
@@ -119,6 +119,20 @@ describe('route geometry', () => {
     expect(minY).toBeCloseTo(0, 2)
     expect(ahead).toBe(true)
     expect(geo.getAttribute('aRim')).toBeTruthy()
+  })
+
+  it('右弯的标牌落在弯道上，并且朝右', () => {
+    const g = buildRouteGeometry(normalizeRoute([
+      [0, 0], [0, -12], [0, -24], [0, -30],
+      [0.15, -30.6], [0.6, -31.1], [1.2, -31.5], [1.7, -31.6],
+    ]), 3, 0)
+    const bend = bendAnchor(g)
+    expect(bend).toBeTruthy()
+    expect(bend!.right).toBe(true)
+    expect(bend!.point.x).toBeGreaterThan(0.2)
+    expect(bend!.point.z).toBeLessThan(-29)
+    const straight = buildRouteGeometry(normalizeRoute([[0, 0], [0, -20], [0, -40]]))
+    expect(bendAnchor(straight)).toBeNull()
   })
 
   it('pointAtDistance 沿线取样并夹在范围内', () => {

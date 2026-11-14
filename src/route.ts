@@ -141,7 +141,7 @@ export function routeTurnFactors(geo: RouteGeometry): number[] {
 
 /** 贴地 V 的尺寸。开口角约 85°，尖一些，避免看成一撇。 */
 export function chevronDimensions(bandWidth: number): { width: number; length: number; planeW: number; planeL: number } {
-  const width = bandWidth * 0.5
+  const width = bandWidth * 0.68
   const opening = (85 * Math.PI) / 180
   const length = width / 2 / Math.tan(opening / 2)
   const pad = width * 0.28
@@ -157,6 +157,46 @@ export function chevronLocalCorners(width: number, length: number): { tip: THREE
     left: new THREE.Vector3(-width * 0.5, 0.02, -length * 0.5),
     right: new THREE.Vector3(width * 0.5, 0.02, -length * 0.5),
   }
+}
+
+/**
+ * 路线拐弯最集中的位置。right 为真表示向 +X（画面右侧）转。
+ * 直行返回 null。
+ */
+export function bendAnchor(geo: RouteGeometry): { point: THREE.Vector3; right: boolean } | null {
+  const pts = geo.points
+  if (pts.length < 3) return null
+  const turns: number[] = []
+  for (let i = 1; i < pts.length - 1; i++) {
+    const ax = pts[i].x - pts[i - 1].x
+    const az = pts[i].z - pts[i - 1].z
+    const bx = pts[i + 1].x - pts[i].x
+    const bz = pts[i + 1].z - pts[i].z
+    const ha = Math.atan2(ax, -az)
+    const hb = Math.atan2(bx, -bz)
+    let d = hb - ha
+    while (d > Math.PI) d -= Math.PI * 2
+    while (d < -Math.PI) d += Math.PI * 2
+    turns.push(d)
+  }
+  let maxAbs = 0
+  for (const t of turns) maxAbs = Math.max(maxAbs, Math.abs(t))
+  if (maxAbs < 0.012) return null
+  const thresh = maxAbs * 0.45
+  let sx = 0
+  let sz = 0
+  let n = 0
+  let sign = 0
+  for (let i = 0; i < turns.length; i++) {
+    if (Math.abs(turns[i]) < thresh) continue
+    const p = pts[i + 1]
+    sx += p.x
+    sz += p.z
+    sign += turns[i]
+    n++
+  }
+  if (!n) return null
+  return { point: new THREE.Vector3(sx / n, 0, sz / n), right: sign >= 0 }
 }
 
 /** 把 V 放到路线 dist 米处，尖端朝前进方向。与渲染用的 lookAt 一致。 */

@@ -21,9 +21,10 @@ import {
   buildGroundGridSegments,
   pointAtDistance,
   chevronDimensions,
+  bendAnchor,
   type RouteGeometry,
 } from './route'
-import { createBandMaterial, createChevronMaterial, createFloorTintMaterial } from './shader'
+import { createBandMaterial, createChevronMaterial, createFloorTintMaterial, createTurnSignMaterial } from './shader'
 
 const css = String.raw
 
@@ -204,12 +205,16 @@ export class NaviArrowCore {
   private tintMesh?: THREE.Mesh
   private tintMat?: THREE.ShaderMaterial
   private tintAmount = 0
+  private floorGain = 1
   private railMesh: THREE.Mesh[] = []
   private railMat?: THREE.ShaderMaterial
   private lastBuilt = { bandWidth: 1.2, railHeight: 0.5 }
   private groundMesh?: THREE.Mesh
   private groundMat?: THREE.ShaderMaterial
   private chevronGroup?: THREE.Group
+  private turnSign?: THREE.Mesh
+  private turnSignMat?: THREE.ShaderMaterial
+  private turnSignOn = false
   private routeGeo?: RouteGeometry
   private groundGrid?: THREE.LineSegments
   /** 地平线校准状态 */
@@ -332,8 +337,8 @@ export class NaviArrowCore {
           vec3 light = max(c.rgb, vec3(0.0));
           float lum = max(light.r, max(light.g, light.b));
           light *= smoothstep(0.0, 0.01, lum);
-          // alpha 只来自医院场景的淡青色衬底；街景为 0，仍然纯加法
-          float a = clamp(c.a, 0.0, 0.1);
+          // alpha 来自青色衬底和地面箭头。上限留给白地板上的 V，不把整条路压暗。
+          float a = clamp(c.a, 0.0, 0.7);
           gl_FragColor = vec4(light, a);
         }
       `,
@@ -381,6 +386,7 @@ export class NaviArrowCore {
     const raw = normalizeRoute(route)
     this.routeGeo = buildRouteGeometry(raw, 3, opts?.tension ?? 0.4)
     this.rebuildCurtain()
+    if (this.turnSignOn) this.placeTurnSign()
   }
 
   private rebuildCurtain() {
@@ -405,6 +411,7 @@ export class NaviArrowCore {
         scanLines: this.params.scanLines,
       })
     }
+    this.bandMat.uniforms.uFloorGain.value = this.floorGain
     const wallH = Math.min(0.58, Math.max(0.42, this.params.railHeight || 0.5))
     const channelGeo = buildChannelGeometry(this.routeGeo, halfW, wallH)
     if (!this.tintMat) this.tintMat = createFloorTintMaterial(this.theme.primary, this.tintAmount)
@@ -424,7 +431,13 @@ export class NaviArrowCore {
     this.revealStart = this.clock.getElapsedTime()
   }
 
-  /** 亮地板上的极淡青色衬底。0 表示关闭（街景）。 */
+  /** 槽底填充倍率。1 是医院现在的亮度，街景用更高的值把路面染青。 */
+  setFloorFill(gain: number) {
+    this.floorGain = Math.max(0, gain)
+    if (this.bandMat) this.bandMat.uniforms.uFloorGain.value = this.floorGain
+  }
+
+  /** 亮地板上的极淡青色衬底。0 表示关闭。 */
   setFloorTint(amount: number) {
     this.tintAmount = Math.max(0, amount)
     if (this.tintMat) {
@@ -443,11 +456,13 @@ export class NaviArrowCore {
       m.uniforms.uScanLines.value = this.params.scanLines
       m.uniforms.uColor.value.set(this.theme.primary)
       m.uniforms.uFarColor.value.set(this.theme.highlight)
+      if (m.uniforms.uFloorGain) m.uniforms.uFloorGain.value = this.floorGain
     }
     for (const m of this.chevronMats) {
       m.uniforms.uColor.value.set(this.theme.primary)
-      m.uniforms.uOpacity.value = 1.05 * this.params.opacity
+      m.uniforms.uOpacity.value = 1.35 * this.params.opacity
     }
+    if (this.turnSignMat) this.turnSignMat.uniforms.uColor.value.set(this.theme.primary)
     if (this.bloomPass) this.bloomPass.strength = this.params.bloomStrength
     // 只有带宽/光幕高度变化才重建几何（可避免每帧重建）
     if (this.routeGeo && (this.lastBuilt.bandWidth !== this.params.bandWidth || this.lastBuilt.railHeight !== this.params.railHeight)) {
@@ -594,7 +609,7 @@ export class NaviArrowCore {
     const count = this.opts.chevronCount ?? 3
     this.chevronMats = []
     for (let i = 0; i < count; i++) {
-      const mat = createChevronMaterial(this.theme.primary, 1.05 * this.params.opacity, size)
+      const mat = createChevronMaterial(this.theme.primary, 1.35 * this.params.opacity, size)
       this.chevronMats.push(mat)
       const mesh = new THREE.Mesh(geo, mat)
       mesh.frustumCulled = false
@@ -633,16 +648,57 @@ export class NaviArrowCore {
     const total = this.routeGeo.total
     this.chevronGroup.children.forEach((mesh: any, i: number) => {
       const base = (i * spacing + t * speed) % cycle
-      const dist = 2.2 + base
+      // 最近的一支也停在镜头前几米，避免尖端探出光带下沿，把底部宽度测成一条细线
+      const dist = 5.5 + base
       const p = pointAtDistance(this.routeGeo!, dist)
       const ahead = pointAtDistance(this.routeGeo!, dist + 0.45)
       mesh.position.set(p.x, 0, p.z)
       mesh.lookAt(ahead.x, 0, ahead.z)
-      const fadeIn = Math.min(1, dist / 2.4)
+      const fadeIn = Math.min(1, Math.max(0, (dist - 4.2) / 2))
       const fadeOut = Math.min(1, Math.max(0, (total - dist) / 8))
       const mat = mesh.material as THREE.ShaderMaterial
       if (mat?.uniforms?.uFade) mat.uniforms.uFade.value = fadeIn * fadeOut
     })
+  }
+
+  /**
+   * 弯道处立一块对着镜头的半透明标牌（约 1.2 米高），中间是指向转弯方向的 V。
+   * 远处置在走廊尽头时像素不多，所以箭头尽量占满牌面。
+   */
+  setTurnSign(enabled: boolean) {
+    this.turnSignOn = enabled
+    if (!enabled) {
+      if (this.turnSign) this.turnSign.visible = false
+      return
+    }
+    if (!this.turnSignMat) this.turnSignMat = createTurnSignMaterial(this.theme.primary)
+    if (!this.turnSign) {
+      const geo = new THREE.PlaneGeometry(1.45, 1.2)
+      this.turnSign = new THREE.Mesh(geo, this.turnSignMat)
+      this.turnSign.frustumCulled = false
+      this.turnSign.renderOrder = 4
+      this.scene.add(this.turnSign)
+    }
+    this.turnSignMat.uniforms.uColor.value.set(this.theme.primary)
+    this.placeTurnSign()
+  }
+
+  private placeTurnSign() {
+    if (!this.turnSign || !this.routeGeo) return
+    const bend = bendAnchor(this.routeGeo)
+    if (!bend) {
+      this.turnSign.visible = false
+      return
+    }
+    this.turnSign.visible = true
+    this.turnSign.position.set(bend.point.x, 0.6, bend.point.z)
+    if (this.turnSignMat) this.turnSignMat.uniforms.uDir.value = bend.right ? 1 : -1
+    this.faceTurnSign()
+  }
+
+  private faceTurnSign() {
+    if (!this.turnSign?.visible) return
+    this.turnSign.lookAt(this.camera.position.x, this.turnSign.position.y, this.camera.position.z)
   }
 
   /** 切换地面 V 形箭头（默认开） */
@@ -751,6 +807,7 @@ export class NaviArrowCore {
       }
     }
     this.updateChevrons(t)
+    this.faceTurnSign()
     if (this.composer) this.composer.render()
     else this.renderer.render(this.scene, this.camera)
   }
@@ -772,6 +829,12 @@ export class NaviArrowCore {
     if (this.groundMesh) disposeGeoMat(this.groundMesh)
     if (this.groundGrid) disposeGeoMat(this.groundGrid)
     this.disposeChevrons()
+    if (this.turnSign) {
+      this.scene.remove(this.turnSign)
+      this.turnSign.geometry.dispose()
+      this.turnSign = undefined
+    }
+    this.turnSignMat?.dispose()
     this.bandMat?.dispose()
     this.railMat?.dispose()
     this.bloomPass?.dispose?.()

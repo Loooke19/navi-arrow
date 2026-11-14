@@ -165,8 +165,10 @@ function applyScene(id: SceneId) {
     navi.params.railHeight = HOSPITAL.height
     navi.theme.primary = '#00C8FF'
     navi.theme.highlight = '#7AF4FF'
+    navi.setFloorFill(1)
     navi.setFloorTint(HOSPITAL.tint)
     navi.setRoute(bend ? HOSPITAL.turn : HOSPITAL.straight, { tension: 0 })
+    navi.setTurnSign(bend)
     navi.setBanner(bend
       ? { distance: '前方20米', action: '右转 进入', road: '门诊二区' }
       : { distance: '', action: '沿走廊', road: '直行' })
@@ -185,8 +187,10 @@ function applyScene(id: SceneId) {
     navi.params.railHeight = 0.5
     navi.theme.primary = '#40D8FF'
     navi.theme.highlight = '#7AEEFF'
-    navi.setFloorTint(0)
+    navi.setFloorFill(2.4)
+    navi.setFloorTint(0.16)
     navi.setRoute(bend ? turnRoute : straightRoute)
+    navi.setTurnSign(false)
     navi.setBanner(bend
       ? { distance: '20米后', action: '右转 进入', road: '无名路' }
       : { distance: '', action: '沿当前道路', road: '直行' })
@@ -201,6 +205,7 @@ function applyScene(id: SceneId) {
   btnCam.classList.remove('active')
 }
 if (shotQuery.get('scene') === 'hospital') applyScene('hospital')
+else applyScene('street')
 
 // 桌面拖拽模拟转头
 attachDragLook(document.getElementById('phone')!, (yaw, pitch) => {
