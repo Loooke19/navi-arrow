@@ -91,8 +91,8 @@ const out = {
 console.log(JSON.stringify(out))
 
 mkdirSync('docs/compare', { recursive: true })
-const floorOK = floor.samples > 400 && floor.lumaDelta >= 6 && floor.blueDelta >= 18 && floor.contrastOK
-if (!(result.lumaOK && result.contrastOK && result.blueOK && marked > 400 && floorOK)) {
-  console.error('FAIL: 光带压暗了照片、盖住了路面、槽底几乎不可见，或不够蓝')
+// 槽底中心现在应当几乎透明，亮的是两侧。中心是否透、边缘是否够亮由 check-gradient.mjs 验收。
+if (!(result.lumaOK && result.contrastOK && result.blueOK && marked > 400)) {
+  console.error('FAIL: 光带压暗了照片、盖住了路面、几乎不可见，或不够蓝')
   process.exitCode = 1
 }

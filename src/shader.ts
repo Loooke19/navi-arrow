@@ -52,17 +52,22 @@ const frag = /* glsl */ `
   varying float vWall;
 
   void main() {
-    // 几何透视负责变窄，这里只在贴着镜头时淡入，远端仍保持可见
+    // 沿程只在贴着镜头时淡入，远端仍保持可见。横向另算，不在这里拉平。
     float fade = mix(1.0, 0.78, smoothstep(0.72, 1.0, vUv.x));
     fade *= smoothstep(0.35, 1.8, vDist);
     vec3 N = normalize(vNormal);
     vec3 V = normalize(cameraPosition - vWorldPos);
     float fres = pow(1.0 - clamp(abs(dot(N, V)), 0.0, 1.0), 1.45);
-    // 槽底很淡，墙的内侧面更亮，通道才像一条槽
-    float floorA = 0.16 * uFloorGain * fade * uOpacity * (0.9 + 0.1 * fres);
-    // 墙比上一版大约暗 40%，和槽底连成一块柔光，而不是两根发亮的轨
-    float wallA = 0.12 * fade * uOpacity * (0.7 + 0.4 * fres);
-    float body = mix(floorA, wallA, smoothstep(0.12, 0.8, vWall));
+    // 横向 u：0 在中线，1 在两侧。中心几乎全透，两边平滑变实。
+    float lat = abs(vUv.y * 2.0 - 1.0);
+    float edge = pow(clamp(lat, 0.0, 1.0), 1.9);
+    float topA = mix(0.04, 0.7, edge);
+    // 侧面和近端切面法线接近水平，整面按边缘的亮度来，比顶面中心亮
+    float sideK = 1.0 - smoothstep(0.22, 0.78, abs(N.y));
+    float sideA = mix(0.58, 0.72, edge);
+    float body = mix(topA, sideA, sideK);
+    body *= fade * uOpacity * mix(1.0, uFloorGain, edge);
+    body *= (0.92 + 0.08 * fres);
     vec3 col = mix(uColor, uFarColor, clamp(vUv.x * 0.35, 0.0, 1.0));
 
     float fw = max(fwidth(vRim), 1e-4);
@@ -180,7 +185,11 @@ export function createFloorTintMaterial(color = '#40D8FF', amount = 0): THREE.Sh
       varying vec2 vUv;
       void main() {
         if (uAmount < 0.001) discard;
-        gl_FragColor = vec4(uColor * uAmount, uAmount);
+        // 衬底也跟着横向变：中心不超过整段的约三分之一，避免把中间染实
+        float lat = abs(vUv.y * 2.0 - 1.0);
+        float edge = pow(clamp(lat, 0.0, 1.0), 1.9);
+        float amt = uAmount * mix(0.28, 1.0, edge);
+        gl_FragColor = vec4(uColor * amt, amt);
       }
     `,
     transparent: true,

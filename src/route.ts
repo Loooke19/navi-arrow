@@ -263,9 +263,13 @@ export function buildRailGeometry(
 }
 
 /**
- * 浅槽光通道：平底 + 两侧圆角升起的矮墙（半管 / 圆角 U），末端用向前鼓出的圆弧封口。
+ * 有厚度的光带：顶面是横向渐变的薄板，两侧和近端是竖直的端面。
+ * 板厚约 0.16 米（行走尺度），透视自然变薄。顶缘仍略微抬起，给细亮边留位置。
  * uv.x 沿程 0→1（弧盖在最末端），uv.y 0 左沿 → 1 右沿。aRim 在墙顶缘为 1。
+ * 侧面、近端端面用独立顶点，法线保持水平，着色时比顶面中心更亮。
  */
+export const CHANNEL_SLAB_THICKNESS = 0.16
+
 export function buildChannelGeometry(geo: RouteGeometry, halfWidth: number, height: number): THREE.BufferGeometry {
   const cols = 17
   const positions: number[] = []
@@ -275,6 +279,8 @@ export function buildChannelGeometry(geo: RouteGeometry, halfWidth: number, heig
   const indices: number[] = []
   const n = geo.points.length
   const up = new THREE.Vector3(0, 1, 0)
+  const slab = CHANNEL_SLAB_THICKNESS
+  const lip = Math.max(slab, Math.min(height, slab + 0.04))
 
   const push = (x: number, y: number, z: number, u: number, v: number, rim: number, wall: number) => {
     positions.push(x, y, z)
@@ -284,24 +290,34 @@ export function buildChannelGeometry(geo: RouteGeometry, halfWidth: number, heig
     return (positions.length / 3) - 1
   }
 
-  // 平底占中间约 70%，外侧用四分之一圆角立起，顶缘接近竖直，墙面在屏幕上是一条带子而不是一条线。
+  // 顶面大部分在板厚高度，最外缘再抬一点，方便压一条细亮边。
   const sampleProfile = (t: number) => {
     const x = t * 2 - 1
     const ax = Math.abs(x)
-    const u = THREE.MathUtils.clamp((ax - 0.70) / 0.30, 0, 1)
-    const y = height * (1 - Math.cos(u * Math.PI / 2))
+    const u = THREE.MathUtils.clamp((ax - 0.82) / 0.18, 0, 1)
+    const y = slab + (lip - slab) * (1 - Math.cos(u * Math.PI / 2))
     const rim = ax > 0.96 ? (ax - 0.96) / 0.04 : 0
-    return { lat: x * halfWidth, y, rim, wall: u }
+    return { lat: x * halfWidth, y, rim, wall: ax }
   }
+
+  type Edge = { x: number; y: number; z: number; u: number }
+  const leftEdge: Edge[] = []
+  const rightEdge: Edge[] = []
 
   const rowAt = (origin: THREE.Vector3, side: THREE.Vector3, uAlong: number) => {
     const row: number[] = []
+    let left: Edge | undefined
+    let right: Edge | undefined
     for (let j = 0; j < cols; j++) {
       const t = j / (cols - 1)
       const pr = sampleProfile(t)
       const p = origin.clone().addScaledVector(side, pr.lat)
       row.push(push(p.x, pr.y, p.z, uAlong, t, pr.rim, pr.wall))
+      if (j === 0) left = { x: p.x, y: pr.y, z: p.z, u: uAlong }
+      if (j === cols - 1) right = { x: p.x, y: pr.y, z: p.z, u: uAlong }
     }
+    if (left) leftEdge.push(left)
+    if (right) rightEdge.push(right)
     return row
   }
 
@@ -319,27 +335,63 @@ export function buildChannelGeometry(geo: RouteGeometry, halfWidth: number, heig
     if (i > 0) linkRows(rows[i - 1], rows[i])
   }
 
-  // 末端圆弧盖：左顶缘绕向前方半周接到右顶缘，槽底补成半圆。
+  // 末端圆弧盖：一侧顶缘绕向前方半周接到另一侧，顶面中心保持透。
   const end = geo.points[n - 1]
   const side = geo.sides[n - 1].clone()
   const forward = new THREE.Vector3().crossVectors(side, up).normalize()
   const capSegs = 16
   const prevRim: number[] = []
+  const capEdge: Edge[] = []
+  if (leftEdge.length) capEdge.push(leftEdge[leftEdge.length - 1])
   for (let k = 0; k <= capSegs; k++) {
     const ang = (Math.PI * k) / capSegs
     const dir = side.clone().multiplyScalar(-Math.cos(ang)).addScaledVector(forward, Math.sin(ang))
     const u = 0.9 + 0.1 * (k / capSegs)
     const row: number[] = []
+    let outer: Edge | undefined
     for (let j = 0; j < cols; j++) {
       const radialT = j / (cols - 1)
-      const uRise = THREE.MathUtils.clamp((radialT - 0.70) / 0.30, 0, 1)
-      const y = height * (1 - Math.cos(uRise * Math.PI / 2))
-      const rim = radialT > 0.96 ? (radialT - 0.96) / 0.04 : 0
+      const pr = sampleProfile(radialT)
       const p = end.clone().addScaledVector(dir, radialT * halfWidth)
-      row.push(push(p.x, y, p.z, u, radialT, rim, uRise))
+      row.push(push(p.x, pr.y, p.z, u, radialT, pr.rim, pr.wall))
+      if (j === cols - 1) outer = { x: p.x, y: pr.y, z: p.z, u }
     }
     if (k > 0) linkRows(prevRim, row)
     for (let j = 0; j < row.length; j++) prevRim[j] = row[j]
+    if (outer && k > 0 && k < capSegs) capEdge.push(outer)
+  }
+  if (rightEdge.length) capEdge.push(rightEdge[rightEdge.length - 1])
+
+  // 左右侧面 + 弧盖外圈：从地面立到顶缘。高度就是板厚，近处看起来是一条厚边。
+  const skirt = (edge: Edge[], vEdge: number) => {
+    for (let i = 0; i < edge.length - 1; i++) {
+      const a = edge[i]
+      const b = edge[i + 1]
+      const a0 = push(a.x, 0, a.z, a.u, vEdge, 1, 1)
+      const a1 = push(a.x, a.y, a.z, a.u, vEdge, 1, 1)
+      const b0 = push(b.x, 0, b.z, b.u, vEdge, 1, 1)
+      const b1 = push(b.x, b.y, b.z, b.u, vEdge, 1, 1)
+      indices.push(a0, b0, a1, a1, b0, b1)
+    }
+  }
+  skirt(leftEdge, 0)
+  skirt(rightEdge, 1)
+  skirt(capEdge, 1)
+
+  // 近端正面：整宽的竖切面，中心高度约等于板厚，两侧跟着顶缘。
+  for (let j = 0; j < cols - 1; j++) {
+    const t0 = j / (cols - 1)
+    const t1 = (j + 1) / (cols - 1)
+    const p0 = sampleProfile(t0)
+    const p1 = sampleProfile(t1)
+    const origin = geo.points[0]
+    const s0 = origin.clone().addScaledVector(geo.sides[0], p0.lat)
+    const s1 = origin.clone().addScaledVector(geo.sides[0], p1.lat)
+    const a0 = push(s0.x, 0, s0.z, 0, t0, 0, 1)
+    const a1 = push(s0.x, p0.y, s0.z, 0, t0, p0.rim, 1)
+    const b0 = push(s1.x, 0, s1.z, 0, t1, 0, 1)
+    const b1 = push(s1.x, p1.y, s1.z, 0, t1, p1.rim, 1)
+    indices.push(a0, a1, b0, b0, a1, b1)
   }
 
   const g = new THREE.BufferGeometry()

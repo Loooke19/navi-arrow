@@ -102,21 +102,32 @@ describe('route geometry', () => {
     expect(maxY).toBeGreaterThan(base * 1.25)
   })
 
-  it('光通道是圆角浅槽，末端弧盖鼓出路线终点', () => {
+  it('光通道是有厚度的板，近端有立面，末端弧盖鼓出路线终点', () => {
     const g = buildRouteGeometry(normalizeRoute([[0, 0], [0, -10], [0, -20]]), 4)
     const geo = buildChannelGeometry(g, 0.9, 0.55)
     const pos = geo.getAttribute('position') as THREE.BufferAttribute
     let maxY = 0
     let minY = 99
     let ahead = false
+    let frontLow = false
+    let frontHigh = false
     const endZ = g.points[g.points.length - 1].z
+    const startZ = g.points[0].z
     for (let i = 0; i < pos.count; i++) {
-      maxY = Math.max(maxY, pos.getY(i))
-      minY = Math.min(minY, pos.getY(i))
+      const y = pos.getY(i)
+      maxY = Math.max(maxY, y)
+      minY = Math.min(minY, y)
       if (pos.getZ(i) < endZ - 0.25) ahead = true
+      if (Math.abs(pos.getZ(i) - startZ) < 0.05 && Math.abs(pos.getX(i)) < 0.15) {
+        if (y < 0.02) frontLow = true
+        if (y > 0.12 && y < 0.22) frontHigh = true
+      }
     }
-    expect(maxY).toBeCloseTo(0.55, 2)
+    expect(maxY).toBeGreaterThan(0.12)
+    expect(maxY).toBeLessThanOrEqual(0.22)
     expect(minY).toBeCloseTo(0, 2)
+    expect(frontLow).toBe(true)
+    expect(frontHigh).toBe(true)
     expect(ahead).toBe(true)
     expect(geo.getAttribute('aRim')).toBeTruthy()
   })

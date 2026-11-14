@@ -25,11 +25,19 @@ function channelMask(routePng, photoPng) {
 function bottomSpan(mask, w, h) {
   const yLo = Math.floor(h * 0.78)
   const yHi = Math.floor(h * 0.90)
-  let chosen = -1
-  for (let y = yHi; y >= yLo; y--) {
+  const counts = new Int32Array(h)
+  let bestN = 0
+  for (let y = yLo; y <= yHi; y++) {
     let n = 0
     for (let x = 0; x < w; x++) if (mask[y * w + x]) n++
-    if (n >= 8) { chosen = y; break }
+    counts[y] = n
+    if (n > bestN) bestN = n
+  }
+  // 近端偶发一条很窄的边角，不拿它当整条光带的宽度
+  const need = Math.max(8, Math.round(bestN * 0.45))
+  let chosen = -1
+  for (let y = yHi; y >= yLo; y--) {
+    if (counts[y] >= need) { chosen = y; break }
   }
   if (chosen < 0) return { ok: false, reason: '底部没有通道像素' }
   let minX = w
@@ -131,4 +139,24 @@ await page.goto(`file://${process.cwd()}/docs/compare/_redo7.html`)
 await page.waitForTimeout(700)
 await page.screenshot({ path: 'docs/compare/redo7-vs-dji.png', fullPage: true })
 console.log('redo7-vs-dji saved')
+
+const grad = `<!DOCTYPE html><html><head><meta charset="utf8"><style>
+  body{margin:0;background:#111;font-family:sans-serif;color:#e8eef8}
+  .row{display:flex;gap:16px;padding:16px;width:980px}
+  .cell{width:470px}
+  .frame{width:470px;height:520px;overflow:hidden;background:#000;position:relative}
+  .frame img{position:absolute;display:block}
+  .h img{width:780px;left:-80px;top:-1120px}
+  .d img{width:1100px;left:-640px;top:-90px}
+  .t{font-size:16px;text-align:center;padding:8px 4px 0}
+</style></head><body><div class="row">
+  <div class="cell"><div class="frame h"><img src="file://${process.cwd()}/docs/compare/hospital-01-straight.png"></div><div class="t">医院走廊 · 两边实、中间透</div></div>
+  <div class="cell"><div class="frame d"><img src="file://${process.cwd()}/reference/dji-frames/f_10.jpg"></div><div class="t">DJI · 楼群上的光带</div></div>
+</div></body></html>`
+writeFileSync('docs/compare/_gradient.html', grad)
+await page.setViewportSize({ width: 1020, height: 600 })
+await page.goto(`file://${process.cwd()}/docs/compare/_gradient.html`)
+await page.waitForTimeout(500)
+await page.screenshot({ path: 'docs/compare/gradient-vs-dji.png' })
+console.log('gradient-vs-dji saved')
 await b2.close()

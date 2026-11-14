@@ -152,7 +152,7 @@ const HOSPITAL = {
   aspect: 1400 / 1867,
   width: 0.85,
   height: 0.48,
-  tint: 0.13,
+  tint: 0.05,
   straight: [[0, 0], [0, -12], [0, -24], [0, -36], [0, -48]] as Array<[number, number]>,
   // 先直行到走廊尽头附近，再以半径 1.8m 只向右弯一次，不先往左甩
   turn: ([[0, 0], [0, -12], [0, -24], [0, -30]] as Array<[number, number]>).concat(rightArc(0, -30, 1.8, 80, 10)),
@@ -187,8 +187,8 @@ function applyScene(id: SceneId) {
     navi.params.railHeight = 0.5
     navi.theme.primary = '#40D8FF'
     navi.theme.highlight = '#7AEEFF'
-    navi.setFloorFill(2.4)
-    navi.setFloorTint(0.16)
+    navi.setFloorFill(1)
+    navi.setFloorTint(0)
     navi.setRoute(bend ? turnRoute : straightRoute)
     navi.setTurnSign(false)
     navi.setBanner(bend
