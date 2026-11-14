@@ -31,8 +31,8 @@ export function normalizeRoute(route: any): THREE.Vector3[] {
 }
 
 /** 平滑 + 按弧长等距采样（全部贴地 y=0），并预计算每点侧向量 */
-export function buildRouteGeometry(rawPoints: THREE.Vector3[], samplesPerMeter = 3): RouteGeometry {
-  const curve = new THREE.CatmullRomCurve3(rawPoints, false, 'catmullrom', 0.4)
+export function buildRouteGeometry(rawPoints: THREE.Vector3[], samplesPerMeter = 3, tension = 0.4): RouteGeometry {
+  const curve = new THREE.CatmullRomCurve3(rawPoints, false, 'catmullrom', tension)
   const total = curve.getLength()
   const count = Math.max(20, Math.ceil(total * samplesPerMeter) + 1)
   const points = curve.getSpacedPoints(count - 1).map((p) => new THREE.Vector3(p.x, 0, p.z))

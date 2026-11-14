@@ -58,7 +58,7 @@ const frag = /* glsl */ `
     vec3 V = normalize(cameraPosition - vWorldPos);
     float fres = pow(1.0 - clamp(abs(dot(N, V)), 0.0, 1.0), 1.45);
     // 槽底很淡，墙的内侧面更亮，通道才像一条槽
-    float floorA = 0.08 * fade * uOpacity * (0.8 + 0.2 * fres);
+    float floorA = 0.16 * fade * uOpacity * (0.85 + 0.15 * fres);
     // 墙比上一版大约暗 40%，和槽底连成一块柔光，而不是两根发亮的轨
     float wallA = 0.12 * fade * uOpacity * (0.7 + 0.4 * fres);
     float body = mix(floorA, wallA, smoothstep(0.12, 0.8, vWall));

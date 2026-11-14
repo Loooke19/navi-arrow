@@ -137,27 +137,25 @@ if (campos) {
 applyLook()
 
 type SceneId = 'street' | 'hospital'
+function rightArc(x0: number, z0: number, radius: number, degrees: number, steps: number): Array<[number, number]> {
+  const pts: Array<[number, number]> = []
+  const max = (degrees * Math.PI) / 180
+  for (let i = 1; i <= steps; i++) {
+    const t = max * (i / steps)
+    pts.push([+(x0 + radius * (1 - Math.cos(t))).toFixed(3), +(z0 - radius * Math.sin(t)).toFixed(3)])
+  }
+  return pts
+}
 const HOSPITAL = {
-  horizonY: 0.48,
+  horizonY: 0.445,
   vanishX: 0.50,
   aspect: 1400 / 1867,
   width: 0.85,
   height: 0.48,
-  tint: 0.08,
-  straight: [
-    [0, 0],
-    [0, -8],
-    [0, -16],
-    [0, -24],
-  ] as Array<[number, number]>,
-  turn: [
-    [0, 0],
-    [0, -12],
-    [0, -20],
-    [0.3, -24],
-    [0.9, -27],
-    [1.45, -29.5],
-  ] as Array<[number, number]>,
+  tint: 0.13,
+  straight: [[0, 0], [0, -12], [0, -24], [0, -36], [0, -48]] as Array<[number, number]>,
+  // 先直行到走廊尽头附近，再以半径 1.8m 只向右弯一次，不先往左甩
+  turn: ([[0, 0], [0, -12], [0, -24], [0, -30]] as Array<[number, number]>).concat(rightArc(0, -30, 1.8, 80, 10)),
 }
 function applyScene(id: SceneId) {
   const bend = shotQuery.has('bend')
@@ -165,10 +163,10 @@ function applyScene(id: SceneId) {
     img.src = './assets/hospital.jpg'
     navi.params.bandWidth = HOSPITAL.width
     navi.params.railHeight = HOSPITAL.height
-    navi.theme.primary = '#40D8FF'
-    navi.theme.highlight = '#8AF4FF'
+    navi.theme.primary = '#00C8FF'
+    navi.theme.highlight = '#7AF4FF'
     navi.setFloorTint(HOSPITAL.tint)
-    navi.setRoute(bend ? HOSPITAL.turn : HOSPITAL.straight)
+    navi.setRoute(bend ? HOSPITAL.turn : HOSPITAL.straight, { tension: 0 })
     navi.setBanner(bend
       ? { distance: '前方20米', action: '右转 进入', road: '门诊二区' }
       : { distance: '', action: '沿走廊', road: '直行' })

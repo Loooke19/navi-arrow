@@ -48,13 +48,13 @@ const STYLE = css`
   .na-banner {
     position: absolute;
     top: calc(68px + env(safe-area-inset-top, 0px));
-    left: 15px;
-    right: 76px;
+    left: 12px;
+    right: 74px;
     height: 56px;
     display: flex;
     align-items: center;
     border-radius: 28px;
-    padding: 0 18px 0 7px;
+    padding: 0 10px 0 6px;
     overflow: hidden;
     opacity: 0;
     transform: translateY(-10px);
@@ -69,35 +69,35 @@ const STYLE = css`
   }
   .na-banner.visible { opacity: 1; transform: translateY(0); }
   .na-banner .na-icon {
-    width: 46px; height: 46px;
+    width: 40px; height: 40px;
     border-radius: 50%;
     background: radial-gradient(circle at 35% 30%, #ffffff, #dfe9ff 70%, #bcd0ff);
     display: flex; align-items: center; justify-content: center;
-    margin-right: 12px;
+    margin-right: 8px;
     flex: none;
     overflow: hidden;
     box-shadow: 0 1px 4px rgba(0,20,60,.3);
   }
   .na-banner .na-icon img { width: 100%; height: 100%; object-fit: cover; border-radius: 50%; }
   .na-banner .na-icon span { font-size: 24px; line-height: 1; }
-  .na-banner-text { display: flex; align-items: baseline; gap: 8px; white-space: nowrap; }
+  .na-banner-text { display: flex; align-items: baseline; gap: 4px; white-space: nowrap; min-width: 0; }
   .na-banner .na-dist {
     color: #ffffff;
-    font-size: 17px;
+    font-size: 15px;
     font-weight: 500;
     text-shadow: 0 1px 2px rgba(0,30,90,.35);
   }
   .na-banner .na-action {
     color: #ffffff;
-    font-size: 18px;
+    font-size: 15px;
     font-weight: 400;
     text-shadow: 0 1px 2px rgba(0,30,90,.35);
   }
   .na-banner .na-road {
     color: #ffffff;
-    font-size: 22px;
+    font-size: 17px;
     font-weight: 700;
-    letter-spacing: .5px;
+    letter-spacing: 0;
     text-shadow: 0 1px 2px rgba(0,30,90,.35);
   }
   .na-arrow-icon { width: 26px; height: 26px; }
@@ -377,9 +377,9 @@ export class NaviArrowCore {
   }
 
   /** 设置/替换路线（局部坐标：米，y 向上） */
-  setRoute(route: NonNullable<NaviArrowOptions['route']>) {
+  setRoute(route: NonNullable<NaviArrowOptions['route']>, opts?: { tension?: number }) {
     const raw = normalizeRoute(route)
-    this.routeGeo = buildRouteGeometry(raw)
+    this.routeGeo = buildRouteGeometry(raw, 3, opts?.tension ?? 0.4)
     this.rebuildCurtain()
   }
 
