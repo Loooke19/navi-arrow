@@ -59,7 +59,7 @@ const frag = /* glsl */ `
     float fres = pow(1.0 - clamp(abs(dot(N, V)), 0.0, 1.0), 1.45);
     // 槽底很淡，墙的内侧面更亮，通道才像一条槽
     float floorA = 0.055 * fade * uOpacity * (0.75 + 0.25 * fres);
-    float wallA = 0.30 * fade * uOpacity * (0.55 + 0.95 * fres);
+    float wallA = 0.20 * fade * uOpacity * (0.5 + 0.85 * fres);
     float body = mix(floorA, wallA, smoothstep(0.08, 0.72, vWall));
     vec3 col = mix(uColor, uFarColor, clamp(vUv.x * 0.35, 0.0, 1.0));
 

@@ -74,18 +74,29 @@ btnCam.addEventListener('click', enterCameraMode)
 btnPhoto.addEventListener('click', exitCameraMode)
 
 // ---------- 组件 ----------
+const shotQuery = new URLSearchParams(location.search)
+const laneX = 0.28 // 近端落在车道中线附近（照片消失点约在画面 0.6）
+const straightRoute = [
+  [laneX, 0],
+  [laneX, -14],
+  [laneX, -30],
+  [laneX, -48],
+  [laneX, -64], // 直行收到地平线，末端圆弧收口
+]
+const turnRoute = [
+  [laneX, 0],
+  [laneX, -12],
+  [laneX, -20],
+  [0.7, -26],
+  [2.4, -30],
+  [4.6, -33.5],   // 路口一带向右弯，大约在画面 y=560–600
+  [6.8, -36.5],
+  [8.0, -39],     // 末端圆弧收到画面 x≈0.8
+]
 const navi = createNaviArrow(document.getElementById('navi') as HTMLElement, {
-  route: [
-    [0, 0],
-    [0, -18],
-    [0, -30],       // 长直线，透视收到地平线附近
-    [0.5, -34],
-    [2.2, -36.5],   // 远端开始右转
-    [4.6, -38.2],
-    [6.6, -39.6],   // 收口在画面中右、地平线下方
-  ],
-  curtainHeight: 0.72,
-  curtainWidth: 2.1,
+  route: shotQuery.has('bend') ? turnRoute : straightRoute,
+  curtainHeight: 0.5,
+  curtainWidth: 1.05,
   showChevrons: true,
   autoRender: false,
   banner: { distance: '20米后', action: '进入', road: '无名路' },

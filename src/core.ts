@@ -386,7 +386,7 @@ export class NaviArrowCore {
         scanLines: this.params.scanLines,
       })
     }
-    const wallH = Math.min(0.85, Math.max(0.55, this.params.railHeight || 0.72))
+    const wallH = Math.min(0.58, Math.max(0.42, this.params.railHeight || 0.5))
     this.bandMesh = new THREE.Mesh(buildChannelGeometry(this.routeGeo, halfW, wallH), this.bandMat)
     this.bandMesh.frustumCulled = false
     this.bandMesh.renderOrder = 1
