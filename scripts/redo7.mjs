@@ -97,7 +97,9 @@ const cam = await chromium.launch({
   args: [...glArgs, '--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream'],
 })
 await shoot(cam, [
-  { url: 'http://localhost:5173/?shot=1&cam=1', path: 'docs/compare/demo-05-camera-live.png', wait: 2800 },
+  { url: 'http://localhost:5173/?shot=1&cam=1', path: 'docs/compare/demo-05-camera-live.png', name: 'cam', wait: 2800 },
+  { url: 'http://localhost:5173/?shot=1&scene=hospital', path: 'docs/compare/hospital-01-straight.png', name: 'hospital-straight', wait: 2200 },
+  { url: 'http://localhost:5173/?shot=1&scene=hospital&bend=1', path: 'docs/compare/hospital-02-turn.png', name: 'hospital-turn', wait: 2200 },
 ])
 await cam.close()
 

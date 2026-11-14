@@ -23,7 +23,7 @@ import {
   chevronDimensions,
   type RouteGeometry,
 } from './route'
-import { createBandMaterial, createChevronMaterial } from './shader'
+import { createBandMaterial, createChevronMaterial, createFloorTintMaterial } from './shader'
 
 const css = String.raw
 
@@ -201,6 +201,9 @@ export class NaviArrowCore {
   private chevronMats: THREE.ShaderMaterial[] = []
   private bandMesh?: THREE.Mesh
   private bandMat?: THREE.ShaderMaterial
+  private tintMesh?: THREE.Mesh
+  private tintMat?: THREE.ShaderMaterial
+  private tintAmount = 0
   private railMesh: THREE.Mesh[] = []
   private railMat?: THREE.ShaderMaterial
   private lastBuilt = { bandWidth: 1.2, railHeight: 0.5 }
@@ -308,6 +311,15 @@ export class NaviArrowCore {
     const hi = (this.bloomPass as any).highPassUniforms
     if (hi?.smoothWidth) hi.smoothWidth.value = 0.08
     this.composer.addPass(this.bloomPass)
+    const bloomBlend = (this.bloomPass as any).blendMaterial as THREE.ShaderMaterial | undefined
+    if (bloomBlend) {
+      bloomBlend.blending = THREE.CustomBlending
+      bloomBlend.blendEquation = THREE.AddEquation
+      bloomBlend.blendSrc = THREE.OneFactor
+      bloomBlend.blendDst = THREE.OneFactor
+      bloomBlend.blendSrcAlpha = THREE.ZeroFactor
+      bloomBlend.blendDstAlpha = THREE.OneFactor
+    }
     // 预乘加法：rgb = 要加到照片上的光，alpha = 0 → 浏览器 result = rgb + photo，绝不压暗。
     const AdditiveCompositeShader = {
       uniforms: { tDiffuse: { value: null } },
@@ -316,10 +328,13 @@ export class NaviArrowCore {
         uniform sampler2D tDiffuse;
         varying vec2 vUv;
         void main() {
-          vec3 light = max(texture2D(tDiffuse, vUv).rgb, vec3(0.0));
+          vec4 c = texture2D(tDiffuse, vUv);
+          vec3 light = max(c.rgb, vec3(0.0));
           float lum = max(light.r, max(light.g, light.b));
           light *= smoothstep(0.0, 0.01, lum);
-          gl_FragColor = vec4(light, 0.0);
+          // alpha 只来自医院场景的淡青色衬底；街景为 0，仍然纯加法
+          float a = clamp(c.a, 0.0, 0.1);
+          gl_FragColor = vec4(light, a);
         }
       `,
     }
@@ -373,6 +388,10 @@ export class NaviArrowCore {
     const halfW = this.params.bandWidth / 2
 
     // 1. 地面带（加法发光、横向羽化）
+    if (this.tintMesh) {
+      this.scene.remove(this.tintMesh)
+      this.tintMesh = undefined
+    }
     if (this.bandMesh) {
       this.scene.remove(this.bandMesh)
       this.bandMesh.geometry.dispose()
@@ -387,7 +406,14 @@ export class NaviArrowCore {
       })
     }
     const wallH = Math.min(0.58, Math.max(0.42, this.params.railHeight || 0.5))
-    this.bandMesh = new THREE.Mesh(buildChannelGeometry(this.routeGeo, halfW, wallH), this.bandMat)
+    const channelGeo = buildChannelGeometry(this.routeGeo, halfW, wallH)
+    if (!this.tintMat) this.tintMat = createFloorTintMaterial(this.theme.primary, this.tintAmount)
+    this.tintMesh = new THREE.Mesh(channelGeo, this.tintMat)
+    this.tintMesh.frustumCulled = false
+    this.tintMesh.renderOrder = 0
+    this.tintMesh.visible = this.tintAmount > 0.001
+    this.scene.add(this.tintMesh)
+    this.bandMesh = new THREE.Mesh(channelGeo, this.bandMat)
     this.bandMesh.frustumCulled = false
     this.bandMesh.renderOrder = 1
     this.scene.add(this.bandMesh)
@@ -396,6 +422,16 @@ export class NaviArrowCore {
     if (this.opts.showChevrons !== false) this.rebuildChevrons()
 
     this.revealStart = this.clock.getElapsedTime()
+  }
+
+  /** 亮地板上的极淡青色衬底。0 表示关闭（街景）。 */
+  setFloorTint(amount: number) {
+    this.tintAmount = Math.max(0, amount)
+    if (this.tintMat) {
+      this.tintMat.uniforms.uAmount.value = this.tintAmount
+      this.tintMat.uniforms.uColor.value.set(this.theme.primary)
+    }
+    if (this.tintMesh) this.tintMesh.visible = this.tintAmount > 0.001
   }
 
   /** 应用 params 到材质（lil-gui 实时调参）——只改 uniform，不重建几何（宽高变化才重建） */
@@ -729,7 +765,9 @@ export class NaviArrowCore {
       const mats = Array.isArray(o.material) ? o.material : [o.material]
       mats.forEach((m: any) => m?.dispose?.())
     }
+    if (this.tintMesh) this.scene.remove(this.tintMesh)
     if (this.bandMesh) disposeGeoMat(this.bandMesh)
+    this.tintMat?.dispose()
     this.railMesh.forEach(disposeGeoMat)
     if (this.groundMesh) disposeGeoMat(this.groundMesh)
     if (this.groundGrid) disposeGeoMat(this.groundGrid)

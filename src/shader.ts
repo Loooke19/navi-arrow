@@ -58,18 +58,19 @@ const frag = /* glsl */ `
     vec3 V = normalize(cameraPosition - vWorldPos);
     float fres = pow(1.0 - clamp(abs(dot(N, V)), 0.0, 1.0), 1.45);
     // 槽底很淡，墙的内侧面更亮，通道才像一条槽
-    float floorA = 0.055 * fade * uOpacity * (0.75 + 0.25 * fres);
-    float wallA = 0.20 * fade * uOpacity * (0.5 + 0.85 * fres);
-    float body = mix(floorA, wallA, smoothstep(0.08, 0.72, vWall));
+    float floorA = 0.08 * fade * uOpacity * (0.8 + 0.2 * fres);
+    // 墙比上一版大约暗 40%，和槽底连成一块柔光，而不是两根发亮的轨
+    float wallA = 0.12 * fade * uOpacity * (0.7 + 0.4 * fres);
+    float body = mix(floorA, wallA, smoothstep(0.12, 0.8, vWall));
     vec3 col = mix(uColor, uFarColor, clamp(vUv.x * 0.35, 0.0, 1.0));
 
     float fw = max(fwidth(vRim), 1e-4);
     float px = (1.0 - vRim) / fw;
     float farT = smoothstep(4.0, 40.0, vDist);
-    float corePx = mix(1.5, 0.85, farT);
+    float corePx = mix(0.85, 0.4, farT);
     float line = exp(-0.5 * (px / corePx) * (px / corePx));
-    line *= smoothstep(0.45, 0.92, vRim);
-    float lineI = line * 0.7 * fade * uOpacity;
+    line *= smoothstep(0.62, 0.98, vRim);
+    float lineI = line * 0.36 * fade * uOpacity;
     vec3 lineCol = vec3(0.40, 0.94, 1.0);
 
     float a = body + lineI;
@@ -146,7 +147,49 @@ function baseMaterial(uniforms: NaviUniforms): THREE.ShaderMaterial {
     depthWrite: false,
     depthTest: false,
     side: THREE.DoubleSide,
-    blending: THREE.AdditiveBlending,
+    blending: THREE.CustomBlending,
+    blendEquation: THREE.AddEquation,
+    blendSrc: THREE.SrcAlphaFactor,
+    blendDst: THREE.OneFactor,
+    blendSrcAlpha: THREE.ZeroFactor,
+    blendDstAlpha: THREE.OneFactor,
+    toneMapped: false,
+  })
+}
+
+/** 极淡的青色衬底。只写入少量 alpha，让亮地板上也看得出青色，不压暗。 */
+export function createFloorTintMaterial(color = '#40D8FF', amount = 0): THREE.ShaderMaterial {
+  return new THREE.ShaderMaterial({
+    uniforms: {
+      uColor: { value: new THREE.Color(color) },
+      uAmount: { value: amount },
+    },
+    vertexShader: /* glsl */ `
+      varying vec2 vUv;
+      void main() {
+        vUv = uv;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }
+    `,
+    fragmentShader: /* glsl */ `
+      uniform vec3 uColor;
+      uniform float uAmount;
+      varying vec2 vUv;
+      void main() {
+        if (uAmount < 0.001) discard;
+        gl_FragColor = vec4(uColor * uAmount, uAmount);
+      }
+    `,
+    transparent: true,
+    depthWrite: false,
+    depthTest: false,
+    side: THREE.DoubleSide,
+    blending: THREE.CustomBlending,
+    blendEquation: THREE.AddEquation,
+    blendSrc: THREE.OneFactor,
+    blendDst: THREE.OneFactor,
+    blendSrcAlpha: THREE.OneFactor,
+    blendDstAlpha: THREE.OneFactor,
     toneMapped: false,
   })
 }
@@ -206,7 +249,12 @@ export function createChevronMaterial(color: string, opacity = 1.05, size?: { wi
     transparent: true,
     depthWrite: false,
     depthTest: false,
-    blending: THREE.AdditiveBlending,
+    blending: THREE.CustomBlending,
+    blendEquation: THREE.AddEquation,
+    blendSrc: THREE.SrcAlphaFactor,
+    blendDst: THREE.OneFactor,
+    blendSrcAlpha: THREE.ZeroFactor,
+    blendDstAlpha: THREE.OneFactor,
     toneMapped: false,
     side: THREE.DoubleSide,
   })

@@ -10,7 +10,8 @@ import GUI from 'lil-gui'
 const bgLayer = document.getElementById('bg') as HTMLElement
 const video = document.getElementById('cam') as HTMLVideoElement
 const modeMsg = document.getElementById('modeMsg') as HTMLElement
-const btnPhoto = document.getElementById('btnPhoto') as HTMLButtonElement
+const btnStreet = document.getElementById('btnStreet') as HTMLButtonElement
+const btnHospital = document.getElementById('btnHospital') as HTMLButtonElement
 const btnCam = document.getElementById('btnCam') as HTMLButtonElement
 
 // 默认真实街景照片（免版权，来源见 README）
@@ -50,7 +51,8 @@ async function enterCameraMode() {
   video.style.display = 'block'
   bgLayer.style.display = 'none'
   btnCam.classList.add('active')
-  btnPhoto.classList.remove('active')
+  btnStreet.classList.remove('active')
+  btnHospital.classList.remove('active')
   // iOS 需要在同一手势里请求权限；手机上开启后路线随手机俯仰/转动
   const ok = await DeviceOrientationRig.requestPermission()
   if (ok && rig.supported && !deviceRigStarted) {
@@ -65,13 +67,15 @@ function exitCameraMode() {
   video.srcObject = null
   video.style.display = 'none'
   bgLayer.style.display = 'block'
-  btnPhoto.classList.add('active')
+  btnStreet.classList.add('active')
+  btnHospital.classList.remove('active')
   btnCam.classList.remove('active')
   usingDevice = false
 }
 
 btnCam.addEventListener('click', enterCameraMode)
-btnPhoto.addEventListener('click', exitCameraMode)
+btnStreet.addEventListener('click', () => { exitCameraMode(); applyScene('street') })
+btnHospital.addEventListener('click', () => { exitCameraMode(); applyScene('hospital') })
 
 // ---------- 组件 ----------
 const shotQuery = new URLSearchParams(location.search)
@@ -131,6 +135,74 @@ if (campos) {
   if ([x, y, z].every((n) => !Number.isNaN(n))) camera.position.set(x, y, z)
 }
 applyLook()
+
+type SceneId = 'street' | 'hospital'
+const HOSPITAL = {
+  horizonY: 0.48,
+  vanishX: 0.50,
+  aspect: 1400 / 1867,
+  width: 0.85,
+  height: 0.48,
+  tint: 0.08,
+  straight: [
+    [0, 0],
+    [0, -8],
+    [0, -16],
+    [0, -24],
+  ] as Array<[number, number]>,
+  turn: [
+    [0, 0],
+    [0, -12],
+    [0, -20],
+    [0.3, -24],
+    [0.9, -27],
+    [1.45, -29.5],
+  ] as Array<[number, number]>,
+}
+function applyScene(id: SceneId) {
+  const bend = shotQuery.has('bend')
+  if (id === 'hospital') {
+    img.src = './assets/hospital.jpg'
+    navi.params.bandWidth = HOSPITAL.width
+    navi.params.railHeight = HOSPITAL.height
+    navi.theme.primary = '#40D8FF'
+    navi.theme.highlight = '#8AF4FF'
+    navi.setFloorTint(HOSPITAL.tint)
+    navi.setRoute(bend ? HOSPITAL.turn : HOSPITAL.straight)
+    navi.setBanner(bend
+      ? { distance: '前方20米', action: '右转 进入', road: '门诊二区' }
+      : { distance: '', action: '沿走廊', road: '直行' })
+    const calibrate = () => {
+      const aspect = img.naturalWidth && img.naturalHeight ? img.naturalWidth / img.naturalHeight : HOSPITAL.aspect
+      navi.setPhotoAspect(aspect)
+      const p = navi.setHorizonCalibration({ horizonY: HOSPITAL.horizonY, vanishX: HOSPITAL.vanishX, eyeHeight: 1.6 })
+      yawPitch.pitch = THREE.MathUtils.degToRad(p)
+      applyLook()
+    }
+    if (img.complete && img.naturalWidth) calibrate()
+    else img.onload = calibrate
+  } else {
+    img.src = './assets/street.jpg'
+    navi.params.bandWidth = 1.05
+    navi.params.railHeight = 0.5
+    navi.theme.primary = '#40D8FF'
+    navi.theme.highlight = '#7AEEFF'
+    navi.setFloorTint(0)
+    navi.setRoute(bend ? turnRoute : straightRoute)
+    navi.setBanner(bend
+      ? { distance: '20米后', action: '右转 进入', road: '无名路' }
+      : { distance: '', action: '沿当前道路', road: '直行' })
+    navi.setPhotoAspect(PHOTO.aspect)
+    const p = navi.setHorizonCalibration({ horizonY: PHOTO.horizonY, vanishX: PHOTO.vanishX, eyeHeight: 1.6 })
+    yawPitch.pitch = THREE.MathUtils.degToRad(p)
+    applyLook()
+  }
+  navi.applyParams()
+  btnStreet.classList.toggle('active', id === 'street')
+  btnHospital.classList.toggle('active', id === 'hospital')
+  btnCam.classList.remove('active')
+}
+if (shotQuery.get('scene') === 'hospital') applyScene('hospital')
 
 // 桌面拖拽模拟转头
 attachDragLook(document.getElementById('phone')!, (yaw, pitch) => {
@@ -264,14 +336,20 @@ frame()
 
 // ---------- 自动播放脚本 ----------
 const t0 = performance.now() - (parseFloat(new URLSearchParams(location.search).get('t') ?? '0') * 1000)
-const steps: Array<{ at: number; run: () => void }> = [
-  { at: 0, run: () => navi.setBanner({ distance: '', action: '沿当前道路', road: '直行' }) },
-  { at: 3500, run: () => navi.setBanner({ distance: '20米后', action: '右转 进入', road: '无名路' }) },
-  { at: 7500, run: () => navi.setBanner({ distance: '', action: '已进入', road: '无名路' }) },
-  { at: 11000, run: () => navi.setBanner({ distance: '30米后', action: '左转 进入', road: '永初路' }) },
-  { at: 15000, run: () => navi.setFooter({ enabled: true, distance: '剩余0公里', duration: '0分钟', arrival: '已到达目的地' }) },
-  { at: 15500, run: () => navi.setBanner({ distance: '', action: '', road: '目的地在您右侧' }) },
-]
+const steps: Array<{ at: number; run: () => void }> = shotQuery.get('scene') === 'hospital'
+  ? [
+      { at: 0, run: () => navi.setBanner(shotQuery.has('bend')
+        ? { distance: '前方20米', action: '右转 进入', road: '门诊二区' }
+        : { distance: '', action: '沿走廊', road: '直行' }) },
+    ]
+  : [
+      { at: 0, run: () => navi.setBanner({ distance: '', action: '沿当前道路', road: '直行' }) },
+      { at: 3500, run: () => navi.setBanner({ distance: '20米后', action: '右转 进入', road: '无名路' }) },
+      { at: 7500, run: () => navi.setBanner({ distance: '', action: '已进入', road: '无名路' }) },
+      { at: 11000, run: () => navi.setBanner({ distance: '30米后', action: '左转 进入', road: '永初路' }) },
+      { at: 15000, run: () => navi.setFooter({ enabled: true, distance: '剩余0公里', duration: '0分钟', arrival: '已到达目的地' }) },
+      { at: 15500, run: () => navi.setBanner({ distance: '', action: '', road: '目的地在您右侧' }) },
+    ]
 let stepIdx = 0
 function tick() {
   const t = performance.now() - t0
