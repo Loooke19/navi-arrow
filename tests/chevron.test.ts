@@ -26,14 +26,14 @@ function screenY(cam: THREE.PerspectiveCamera, p: THREE.Vector3): number {
 }
 
 describe('chevron direction', () => {
-  it('开口角约 100–110°，尖端在局部 +Z', () => {
+  it('开口角约 80–90°，尖端在局部 +Z', () => {
     const { width, length } = chevronDimensions(1.2)
     const { tip, left, right } = chevronLocalCorners(width, length)
     expect(tip.z).toBeGreaterThan(left.z)
     expect(tip.z).toBeGreaterThan(right.z)
     const ang = left.clone().sub(tip).angleTo(right.clone().sub(tip)) * 180 / Math.PI
-    expect(ang).toBeGreaterThan(100)
-    expect(ang).toBeLessThan(110)
+    expect(ang).toBeGreaterThan(80)
+    expect(ang).toBeLessThan(90)
   })
 
   it('投影后尖端比两翼更远、在屏幕上更高', () => {

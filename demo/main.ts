@@ -77,18 +77,15 @@ btnPhoto.addEventListener('click', exitCameraMode)
 const navi = createNaviArrow(document.getElementById('navi') as HTMLElement, {
   route: [
     [0, 0],
-    [0, -8],
-    [0, -14],
-    [0.15, -16.4],  // 约 18m，横幅说的「20米后」
-    [0.9, -17.8],
-    [2.4, -18.6],   // 右转进横街，这一小段正对镜头
-    [3.6, -20.4],
-    [4.4, -28],
-    [5.2, -42],
-    [5.6, -58],
+    [0, -5],
+    [0, -9],
+    [0.25, -10.6],
+    [1.15, -11.5],  // 右转，通道跟着弯
+    [2.15, -12.1],
+    [2.7, -12.7],   // 末端圆弧收口，仍留在画面里
   ],
-  curtainHeight: 0.5,
-  curtainWidth: 1.2,
+  curtainHeight: 0.55,
+  curtainWidth: 1.7,
   showChevrons: true,
   autoRender: false,
   banner: { distance: '20米后', action: '进入', road: '无名路' },

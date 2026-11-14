@@ -139,10 +139,10 @@ export function routeTurnFactors(geo: RouteGeometry): number[] {
   return held
 }
 
-/** 贴地 V 的尺寸。开口角约 105°，臂宽由着色器按宽度的 0.25 来画。 */
+/** 贴地 V 的尺寸。开口角约 85°，尖一些，避免看成一撇。 */
 export function chevronDimensions(bandWidth: number): { width: number; length: number; planeW: number; planeL: number } {
   const width = bandWidth * 0.5
-  const opening = (105 * Math.PI) / 180
+  const opening = (85 * Math.PI) / 180
   const length = width / 2 / Math.tan(opening / 2)
   const pad = width * 0.28
   return { width, length, planeW: width + pad * 2, planeL: length + pad * 2 }
@@ -217,6 +217,95 @@ export function buildRailGeometry(
   g.setAttribute('position', new THREE.BufferAttribute(positions, 3))
   g.setAttribute('uv', new THREE.BufferAttribute(uvs, 2))
   g.setAttribute('aTurn', new THREE.BufferAttribute(turns, 1))
+  g.setIndex(indices)
+  g.computeVertexNormals()
+  return g
+}
+
+/**
+ * 浅槽光通道：平底 + 两侧圆角升起的矮墙（半管 / 圆角 U），末端用向前鼓出的圆弧封口。
+ * uv.x 沿程 0→1（弧盖在最末端），uv.y 0 左沿 → 1 右沿。aRim 在墙顶缘为 1。
+ */
+export function buildChannelGeometry(geo: RouteGeometry, halfWidth: number, height: number): THREE.BufferGeometry {
+  const cols = 17
+  const positions: number[] = []
+  const uvs: number[] = []
+  const rims: number[] = []
+  const indices: number[] = []
+  const n = geo.points.length
+  const up = new THREE.Vector3(0, 1, 0)
+
+  const push = (x: number, y: number, z: number, u: number, v: number, rim: number) => {
+    positions.push(x, y, z)
+    uvs.push(u, v)
+    rims.push(rim)
+    return (positions.length / 3) - 1
+  }
+
+  // t: 0 左顶缘 → 1 右顶缘。中间贴地，两侧用 1-cos 圆角抬起，到顶缘时切线接近竖直。
+  const sampleProfile = (t: number) => {
+    const x = t * 2 - 1
+    const ax = Math.abs(x)
+    const u = THREE.MathUtils.clamp((ax - 0.52) / 0.48, 0, 1)
+    const s = u * u * (3 - 2 * u)
+    const y = height * (1 - Math.cos(s * Math.PI / 2))
+    const rim = ax > 0.94 ? (ax - 0.94) / 0.06 : 0
+    return { lat: x * halfWidth, y, rim }
+  }
+
+  const rowAt = (origin: THREE.Vector3, side: THREE.Vector3, uAlong: number) => {
+    const row: number[] = []
+    for (let j = 0; j < cols; j++) {
+      const t = j / (cols - 1)
+      const pr = sampleProfile(t)
+      const p = origin.clone().addScaledVector(side, pr.lat)
+      row.push(push(p.x, pr.y, p.z, uAlong, t, pr.rim))
+    }
+    return row
+  }
+
+  const linkRows = (a: number[], b: number[]) => {
+    for (let j = 0; j < cols - 1; j++) {
+      const a0 = a[j], a1 = a[j + 1], b0 = b[j], b1 = b[j + 1]
+      indices.push(a0, b0, a1, a1, b0, b1)
+    }
+  }
+
+  const rows: number[][] = []
+  for (let i = 0; i < n; i++) {
+    const u = (i / Math.max(1, n - 1)) * 0.9
+    rows.push(rowAt(geo.points[i], geo.sides[i], u))
+    if (i > 0) linkRows(rows[i - 1], rows[i])
+  }
+
+  // 末端圆弧盖：左顶缘绕向前方半周接到右顶缘，槽底补成半圆。
+  const end = geo.points[n - 1]
+  const side = geo.sides[n - 1].clone()
+  const forward = new THREE.Vector3().crossVectors(side, up).normalize()
+  const capSegs = 16
+  const prevRim: number[] = []
+  for (let k = 0; k <= capSegs; k++) {
+    const ang = (Math.PI * k) / capSegs
+    const dir = side.clone().multiplyScalar(-Math.cos(ang)).addScaledVector(forward, Math.sin(ang))
+    const u = 0.9 + 0.1 * (k / capSegs)
+    const row: number[] = []
+    for (let j = 0; j < cols; j++) {
+      const radialT = j / (cols - 1)
+      const uRise = THREE.MathUtils.clamp((radialT - 0.52) / 0.48, 0, 1)
+      const s = uRise * uRise * (3 - 2 * uRise)
+      const y = height * (1 - Math.cos(s * Math.PI / 2))
+      const rim = radialT > 0.94 ? (radialT - 0.94) / 0.06 : 0
+      const p = end.clone().addScaledVector(dir, radialT * halfWidth)
+      row.push(push(p.x, y, p.z, u, radialT, rim))
+    }
+    if (k > 0) linkRows(prevRim, row)
+    for (let j = 0; j < row.length; j++) prevRim[j] = row[j]
+  }
+
+  const g = new THREE.BufferGeometry()
+  g.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2))
+  g.setAttribute('aRim', new THREE.Float32BufferAttribute(rims, 1))
   g.setIndex(indices)
   g.computeVertexNormals()
   return g

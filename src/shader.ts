@@ -10,29 +10,23 @@
 import * as THREE from 'three'
 
 const vert = /* glsl */ `
-  attribute float aTurn;
+  attribute float aRim;
   uniform float uReveal;
   varying vec2 vUv;
   varying vec3 vWorldPos;
+  varying vec3 vNormal;
   varying float vDist;
-  varying float vFace;
-  varying float vTurn;
+  varying float vRim;
 
   void main() {
     vUv = uv;
-    vTurn = aTurn;
+    vRim = aRim;
     vec3 p = position;
-    float reveal = clamp(uReveal * 1.3 - vUv.x * 0.3, 0.0, 1.0);
-    // 近处把光幕压矮，避免贴着镜头的侧幕在屏幕上摊成一根粗管；
-    // 走到转弯（十几米外）才升到完整高度。
-    vec4 wp0 = modelMatrix * vec4(position, 1.0);
-    float dist0 = length(cameraPosition - wp0.xyz);
-    float rise = smoothstep(3.5, 14.0, dist0);
-    p.y *= reveal * mix(0.2, 1.0, rise);
+    float reveal = clamp(uReveal * 1.25 - vUv.x * 0.25, 0.0, 1.0);
+    p.y *= reveal;
     vec4 wp = modelMatrix * vec4(p, 1.0);
     vWorldPos = wp.xyz;
-    vec3 n = normalize(mat3(modelMatrix) * normal);
-    vFace = abs(dot(n, normalize(cameraPosition - wp.xyz)));
+    vNormal = normalize(mat3(modelMatrix) * normal);
     vec4 mv = viewMatrix * wp;
     vDist = -mv.z;
     gl_Position = projectionMatrix * mv;
@@ -46,92 +40,33 @@ const frag = /* glsl */ `
   uniform float uOpacity;
   uniform float uTime;
   uniform float uFlowSpeed;
-  uniform float uScanLines;
-  uniform float uReveal;
-  uniform float uMode;
   varying vec2 vUv;
   varying vec3 vWorldPos;
+  varying vec3 vNormal;
   varying float vDist;
-  varying float vFace;
-  varying float vTurn;
-
-  float hash(float n) { return fract(sin(n * 127.1) * 43758.5453); }
-
-  // 沿程：转弯那一段仍保持接近 1，只有最远端收到 0
-  float routeFade(float along, float dist) {
-    float k = mix(1.0, 0.35, smoothstep(0.62, 0.9, along));
-    k *= 1.0 - smoothstep(0.9, 1.0, along);
-    k *= smoothstep(0.9, 3.2, dist);
-    return k;
-  }
+  varying float vRim;
 
   void main() {
-    float fade = routeFade(vUv.x, vDist);
-    float speed = max(uFlowSpeed, 0.25);
-    // 沿路线向前的柔光脉冲（只加亮，没有暗带）
-    float pulse = fract(vUv.x * 3.0 - uTime / speed);
-    pulse = smoothstep(0.0, 0.10, pulse) * smoothstep(0.32, 0.10, pulse);
-    pulse *= smoothstep(3.0, 6.5, vDist);
+    float fade = mix(1.0, 0.62, smoothstep(0.5, 0.9, vUv.x));
+    fade *= smoothstep(0.45, 2.2, vDist);
+    vec3 N = normalize(vNormal);
+    vec3 V = normalize(cameraPosition - vWorldPos);
+    float fres = pow(1.0 - clamp(abs(dot(N, V)), 0.0, 1.0), 1.7);
+    float body = 0.18 * (0.58 + 0.75 * fres) * fade * uOpacity;
+    vec3 col = mix(uColor, uFarColor, clamp(vUv.x * 0.4 + fres * 0.06, 0.0, 1.0));
 
-    vec3 nearCol = uColor;
-    vec3 farCol = uFarColor;
-    vec3 added;
-    float a;
+    float fw = max(fwidth(vRim), 1e-4);
+    float px = (1.0 - vRim) / fw;
+    float farT = smoothstep(3.0, 26.0, vDist);
+    float corePx = mix(1.7, 0.75, farT);
+    float line = exp(-0.5 * (px / corePx) * (px / corePx));
+    line *= smoothstep(0.4, 0.9, vRim);
+    float lineI = line * 0.78 * fade * uOpacity;
+    vec3 lineCol = mix(uColor, vec3(0.42, 0.80, 1.0), 0.62);
 
-    if (uMode < 0.5) {
-      // ===== 地面光带：均匀浅填充，两侧软落到 0，没有硬边 =====
-      float across = abs(vUv.y - 0.5) * 2.0;
-      float feather = pow(max(0.5 + 0.5 * cos(across * 3.14159265), 0.0), 0.72);
-      float body = 0.34 * feather * fade * uOpacity;
-      // 近端大约再亮 30%，远处回到设计强度
-      body *= mix(1.30, 1.0, smoothstep(5.5, 13.0, vDist));
-      body += pulse * 0.06 * feather * fade * uOpacity;
-      vec3 col = mix(nearCol, farCol, clamp(vUv.x * 0.4, 0.0, 1.0));
-      added = col * body;
-      a = body;
-    } else {
-      // ===== 侧光幕 =====
-      // 贴地约 0.45 → 顶边约 0.07，转弯处这就是正面看见的光片
-      float t = smoothstep(0.0, 1.0, vUv.y);
-      float bodyI = mix(0.45, 0.07, t);
-
-      // 很淡的竖向纤维（沿高度不变、沿路线疏密变化），像一层光纱
-      float cells = mix(36.0, 80.0, clamp(uScanLines / 18.0, 0.0, 1.0));
-      float su = vUv.x * cells;
-      float id = floor(su);
-      float f = fract(su);
-      float n = hash(id);
-      float w = mix(0.10, 0.34, n);
-      float fiber = smoothstep(0.0, w * 0.5, f) * smoothstep(w, w * 0.45, f);
-      bodyI *= mix(0.88, 1.0, fiber);
-
-      // 顺着看只留一窄条，避免贴镜头摊成粗管；转弯（vTurn）用完整 0.45
-      float face = smoothstep(0.04, 0.4, vFace);
-      float faceK = mix(0.22, 1.0, face);
-      faceK = max(faceK, smoothstep(0.12, 0.55, vTurn));
-      bodyI *= faceK;
-      bodyI *= fade * uOpacity;
-      bodyI += pulse * 0.05 * (1.0 - t) * fade * uOpacity;
-
-      // 顶边：屏幕空间 2~3px（近）收到更细（远），亮青白 + 软辉光
-      float fw = max(fwidth(vUv.y), 1e-4);
-      float px = (1.0 - vUv.y) / fw;
-      float farT = smoothstep(4.0, 48.0, vDist);
-      float corePx = mix(1.25, 0.42, farT);
-      float core = exp(-0.5 * (px / corePx) * (px / corePx));
-      float glowPx = corePx * 2.2;
-      float glow = exp(-0.5 * (px / max(glowPx, 0.8)) * (px / max(glowPx, 0.8)));
-      float lineI = (core * 0.82 + glow * 0.16) * fade * uOpacity;
-      lineI *= 1.0 + pulse * 0.18;
-
-      vec3 bodyCol = mix(nearCol, farCol, t * 0.25 + vUv.x * 0.2);
-      // 顶边是浅青蓝，不往白色靠
-      vec3 lineCol = mix(nearCol, vec3(0.45, 0.82, 1.0), 0.72);
-      added = bodyCol * bodyI + lineCol * lineI;
-      a = bodyI + lineI;
-    }
-
+    float a = body + lineI;
     if (a < 0.004) discard;
+    vec3 added = col * body + lineCol * lineI;
     gl_FragColor = vec4(added / max(a, 1e-4), clamp(a, 0.0, 1.0));
   }
 `

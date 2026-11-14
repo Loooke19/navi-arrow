@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import * as THREE from 'three'
-import { normalizeRoute, buildRouteGeometry, buildBandGeometry, buildEdgeLinePoints, buildRailGeometry, pointAtDistance, routeTurnFactors } from '../src/route'
+import { normalizeRoute, buildRouteGeometry, buildBandGeometry, buildEdgeLinePoints, buildRailGeometry, buildChannelGeometry, pointAtDistance, routeTurnFactors } from '../src/route'
 
 const route = [
   [0, 0],
@@ -100,6 +100,25 @@ describe('route geometry', () => {
     }
     expect(minTop).toBeGreaterThanOrEqual(base - 1e-4)
     expect(maxY).toBeGreaterThan(base * 1.25)
+  })
+
+  it('光通道是圆角浅槽，末端弧盖鼓出路线终点', () => {
+    const g = buildRouteGeometry(normalizeRoute([[0, 0], [0, -10], [0, -20]]), 4)
+    const geo = buildChannelGeometry(g, 0.9, 0.55)
+    const pos = geo.getAttribute('position') as THREE.BufferAttribute
+    let maxY = 0
+    let minY = 99
+    let ahead = false
+    const endZ = g.points[g.points.length - 1].z
+    for (let i = 0; i < pos.count; i++) {
+      maxY = Math.max(maxY, pos.getY(i))
+      minY = Math.min(minY, pos.getY(i))
+      if (pos.getZ(i) < endZ - 0.25) ahead = true
+    }
+    expect(maxY).toBeCloseTo(0.55, 2)
+    expect(minY).toBeCloseTo(0, 2)
+    expect(ahead).toBe(true)
+    expect(geo.getAttribute('aRim')).toBeTruthy()
   })
 
   it('pointAtDistance 沿线取样并夹在范围内', () => {

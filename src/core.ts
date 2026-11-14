@@ -17,14 +17,13 @@ import {
 import {
   normalizeRoute,
   buildRouteGeometry,
-  buildBandGeometry,
-  buildRailGeometry,
+  buildChannelGeometry,
   buildGroundGridSegments,
   pointAtDistance,
   chevronDimensions,
   type RouteGeometry,
 } from './route'
-import { createBandMaterial, createChevronMaterial, createRailMaterial } from './shader'
+import { createBandMaterial, createChevronMaterial } from './shader'
 
 const css = String.raw
 
@@ -387,34 +386,11 @@ export class NaviArrowCore {
         scanLines: this.params.scanLines,
       })
     }
-    this.bandMesh = new THREE.Mesh(buildBandGeometry(this.routeGeo, halfW), this.bandMat)
+    const wallH = Math.min(0.6, Math.max(0.4, this.params.railHeight || 0.55))
+    this.bandMesh = new THREE.Mesh(buildChannelGeometry(this.routeGeo, halfW, wallH), this.bandMat)
     this.bandMesh.frustumCulled = false
     this.bandMesh.renderOrder = 1
     this.scene.add(this.bandMesh)
-
-    // 2. 两条低矮侧光幕（顶边细线在着色器里，不再画地面粗管）
-    this.railMesh.forEach((m) => {
-      this.scene.remove(m)
-      m.geometry.dispose()
-    })
-    if (!this.railMat) {
-      this.railMat = createRailMaterial({
-        color: this.theme.primary,
-        farColor: this.theme.highlight,
-        opacity: this.params.opacity,
-        flowSpeed: this.params.flowSpeed,
-      })
-    }
-    this.railMesh = ([-1, 1] as const).map((side) => {
-      const m = new THREE.Mesh(
-        buildRailGeometry(this.routeGeo!, halfW, this.params.railHeight, side, 1.0),
-        this.railMat,
-      )
-      m.frustumCulled = false
-      m.renderOrder = 2
-      this.scene.add(m)
-      return m
-    })
 
     // 3. 贴地软箭头（带宽变化时一起重做，保证宽度约为一半）
     if (this.opts.showChevrons !== false) this.rebuildChevrons()
