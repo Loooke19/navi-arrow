@@ -144,9 +144,11 @@ const STYLE = css`
     bottom: 0; left: 0; right: 0;
     height: 88px;
     padding-bottom: env(safe-area-inset-bottom, 0px);
-    background: rgba(22, 28, 38, 0.92);
-    backdrop-filter: blur(12px);
-    -webkit-backdrop-filter: blur(12px);
+    /* 底栏半透明：光带要能从底栏下面透出来，一直亮到屏幕最底边，
+       否则光带看起来像在底栏上方被截断。 */
+    background: linear-gradient(180deg, rgba(22, 28, 38, 0.62) 0%, rgba(22, 28, 38, 0.86) 100%);
+    backdrop-filter: blur(10px) saturate(1.05);
+    -webkit-backdrop-filter: blur(10px) saturate(1.05);
     display: flex; align-items: center; justify-content: space-between;
     padding: 0 10px;
   }
@@ -220,6 +222,9 @@ export class NaviArrowCore {
   private turnSignMat?: THREE.ShaderMaterial
   private turnSignOn = false
   private routeGeo?: RouteGeometry
+  /** 原始（未兜底）路线点，相机变化时重新计算近端 */
+  private rawRoute?: THREE.Vector3[]
+  private routeTension = 0.4
   private groundGrid?: THREE.LineSegments
   /** 地平线校准状态 */
   horizon: { horizonY: number; vanishX: number; pitchDeg: number; enabled: boolean }
@@ -388,13 +393,15 @@ export class NaviArrowCore {
   /** 设置/替换路线（局部坐标：米，y 向上） */
   setRoute(route: NonNullable<NaviArrowOptions['route']>, opts?: { tension?: number }) {
     const raw = normalizeRoute(route)
+    this.rawRoute = raw
+    this.routeTension = opts?.tension ?? 0.4
     // 近端兜底：按当前相机把路线延伸到画面底边的地面落点，
     // 避免任何视口尺寸下出现「带子没顶到底」的空隙。
     const edgeDist = groundEdgeDistance(this.camera)
     this.routeGeo = buildRouteGeometry(
       extendRouteToCamera(raw, this.camera.position, Number.isFinite(edgeDist) ? edgeDist : 4.5),
       3,
-      opts?.tension ?? 0.4,
+      this.routeTension,
     )
     this.rebuildCurtain()
     if (this.turnSignOn) this.placeTurnSign()
@@ -744,6 +751,31 @@ export class NaviArrowCore {
   setCameraPose(pos: { x: number; y: number; z: number } | THREE.Vector3, quat: { x: number; y: number; z: number; w: number } | THREE.Quaternion) {
     this.camera.position.set(pos.x, pos.y, pos.z)
     this.camera.quaternion.set(quat.x, quat.y, quat.z, quat.w)
+    this.ensureNearEndReachesBottom()
+  }
+
+  /**
+   * 近端兜底：相机位姿（含 pitch）变化后，画面底边的地面落点会变。
+   * 若光带近端已经够不到底边，就把路线首点再往镜头方向补一段。
+   * 只在确实需要时重建几何（阈值 0.15m），避免每帧重建。
+   */
+  private ensureNearEndReachesBottom() {
+    if (!this.routeGeo || !this.rawRoute) return
+    this.camera.updateMatrixWorld()
+    const edgeDist = groundEdgeDistance(this.camera)
+    if (!Number.isFinite(edgeDist)) return
+    const wanted = extendRouteToCamera(this.rawRoute, this.camera.position, edgeDist)
+    const rebuilt = buildRouteGeometry(wanted, 3, this.routeTension)
+    // 近端顶点距相机的水平距离
+    const p = rebuilt.points[0]
+    const nearDist = Math.hypot(p.x - this.camera.position.x, p.z - this.camera.position.z)
+    const cur = this.routeGeo.points[0]
+    const curDist = Math.hypot(cur.x - this.camera.position.x, cur.z - this.camera.position.z)
+    if (curDist <= edgeDist + 0.05) return // 已够近，无需改动
+    if (Math.abs(nearDist - curDist) < 0.15 && nearDist <= edgeDist) return
+    this.routeGeo = rebuilt
+    this.rebuildCurtain()
+    if (this.turnSignOn) this.placeTurnSign()
   }
 
   /** 设置横幅内容（触发上滑淡入过渡动画） */

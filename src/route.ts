@@ -42,15 +42,20 @@ export function groundEdgeDistance(camera: THREE.PerspectiveCamera): number {
 }
 
 /**
- * 近端兜底：把路线首点沿首段方向朝镜头延伸到画面底边的地面落点，
- * 保证光带贯穿画面底边。首点若已经比落点更近，原样返回。
+ * 近端兜底：把路线首点沿首段方向朝镜头延伸到画面底边的地面落点。
  *
- * 注意：不能延长到相机身后（近裁剪面之外），那段会从画面顶部穿出。
+ * 两种情形都要处理：
+ *  1) 首点比落点更远（视线抬头时）：向前延长到落点。
+ *  2) 首点在相机身后（视线低头时，例如走廊场景）：身后那段会被投影到画面顶部之外，
+ *     画面里能看到的第一个点其实落在半空中，于是底边露出空隙。
+ *     这时把首点直接移到「镜头 → 落点」之间，让光带从底边开始。
+ *
+ * 首点若已经在 (0, edgeDist] 区间就不动。
  */
 export function extendRouteToCamera(
   points: THREE.Vector3[],
   cameraPos: THREE.Vector3,
-  /** 底边落点距相机的水平距离（缺省用 4.5m，390x844 抬 8.9° 时的典型值） */
+  /** 底边落点距相机的水平距离（缺省用 4.5m） */
   edgeDist = 4.5,
 ): THREE.Vector3[] {
   if (points.length < 2) return points
@@ -62,12 +67,23 @@ export function extendRouteToCamera(
   dir.normalize()
 
   const flat = new THREE.Vector3(cameraPos.x, 0, cameraPos.z)
-  // 「沿路线方向」的坐标：首点、相机各自到起点的投影
-  const firstAhead = new THREE.Vector3().subVectors(first, flat).dot(dir)
-  if (firstAhead <= 0) return points // 首点已在镜头后方，由调用方处理
-  if (firstAhead <= edgeDist) return points // 已经比落点更近
-  const start = first.clone().addScaledVector(dir, -(firstAhead - edgeDist) - 0.3)
-  return [start, ...points]
+  // 首点相对镜头、沿路线方向的距离（负值 = 首点在相机身后）
+  const firstAhead = new THREE.Vector3(first.x - flat.x, 0, first.z - flat.z).dot(dir)
+  const curDist = Math.hypot(first.x - flat.x, first.z - flat.z)
+
+  // 情形 1：首点在镜头前方、但比落点更远 → 向前延长到落点
+  if (firstAhead > 0 && firstAhead > edgeDist) {
+    const start = first.clone().addScaledVector(dir, -(firstAhead - edgeDist) - 0.3)
+    return [start, ...points]
+  }
+  // 情形 2：首点在相机身后，或离相机比落点更远 → 从落点附近重新铺起
+  if (firstAhead <= 0 || curDist > edgeDist) {
+    // 从镜头脚下沿「行进方向」往前铺到落点内：起点在镜头前方，过渡点接回原路线
+    const start = flat.clone().addScaledVector(dir, edgeDist * 0.9)
+    const mid = flat.clone().addScaledVector(dir, Math.min(Math.max(firstAhead, 0) || curDist, edgeDist * 1.4))
+    return [start, mid, ...points]
+  }
+  return points
 }
 
 /** 平滑 + 按弧长等距采样（全部贴地 y=0），并预计算每点侧向量 */
