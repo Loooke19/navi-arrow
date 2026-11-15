@@ -70,11 +70,22 @@ const frag = /* glsl */ `
 
     if (uBright > 0.5) {
       // 白地板：正常透明混合。饱和青 #00B4E6，中心约 0.11，边缘约 0.58。
+      // 外缘若是一条被裁平的等亮平台，从左取峰落在外沿、从右取峰落在内沿。
+      // 把平台向内收一点，两侧峰值才落在同一侧。坡面主体不动。
+      float riseEdge = pow(smoothstep(0.10, 1.0, lat), 1.15);
       vec3 cyan = vec3(0.0, 0.706, 0.902);
-      float alpha = mix(0.11, 0.58, rise);
+      float alpha = mix(0.11, 0.58, riseEdge);
       alpha = mix(alpha, 0.62, sideK);
-      // 细边最多比坡顶高约 10%
       alpha += line * 0.05;
+      float fwLat = max(fwidth(lat), 1e-4);
+      float edgePx = clamp((1.0 - lat) / fwLat, 0.0, 4.0);
+      float rimCrest = mix(0.68, 1.0, exp(-1.6 * edgePx * edgePx));
+      float fwY = max(fwidth(vWorldPos.y), 1e-4);
+      float yPx = clamp(vWorldPos.y / fwY, 0.0, 4.0);
+      float sideCrest = mix(0.55, 1.0, exp(-1.35 * yPx * yPx));
+      float crest = mix(rimCrest, sideCrest, smoothstep(0.20, 0.80, sideK));
+      float edgeZone = max(smoothstep(0.82, 0.97, lat), smoothstep(0.25, 0.85, sideK));
+      alpha *= mix(1.0, crest, edgeZone);
       alpha = min(alpha, 0.66) * fade * uOpacity;
       if (alpha < 0.02) discard;
       gl_FragColor = vec4(cyan * alpha, alpha);

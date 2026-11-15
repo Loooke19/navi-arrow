@@ -72,15 +72,21 @@ function measure(render, photo) {
   const brL = brAt(leftPeak - 1, leftPeak + 1)
   const brR = brAt(rightPeak - 1, rightPeak + 1)
   const brC = brAt(mid - 4, mid + 4)
+  const brHi = Math.max(brL, brR)
+  const brLo = Math.min(brL, brR)
+  const edgeSym = edgeHi > 1e-3 ? edgeLo / edgeHi : 1
+  const brSym = brHi > 1e-3 ? brLo / brHi : 1
   const lumaOK = center > 6 && center < 36
     && edgeLo > 35 && edgeHi < 110
     && edgeLo > edgeHi * 0.55
     && leftPeak < mid - 8 && rightPeak > mid + 8
-  const cyanOK = brL > 70 && brR > 70 && brC < 25
+    && edgeSym >= 0.9
+  const cyanOK = brL > 70 && brR > 70 && brC < 25 && brSym >= 0.9
   return {
     ok: useBr ? cyanOK : lumaOK, y, left, right, span, center: +center.toFixed(2),
     edgeL: +edgeL.toFixed(2), edgeR: +edgeR.toFixed(2), leftPeak, rightPeak,
     brL: +brL.toFixed(1), brR: +brR.toFixed(1), brC: +brC.toFixed(1),
+    edgeSym: +edgeSym.toFixed(3), brSym: +brSym.toFixed(3),
     lumaOK,
   }
 }
@@ -117,7 +123,7 @@ const scenes = [
 let failed = false
 for (const [name, url] of scenes) {
   const result = await shoot(browser, url)
-  const brightOK = name !== 'hospital' || (result.brL > 70 && result.brR > 70 && result.brC < 25)
+  const brightOK = name !== 'hospital' || (result.brL > 70 && result.brR > 70 && result.brC < 25 && result.brSym >= 0.9)
   console.log(JSON.stringify({ name, ...result, brightOK }))
   if (!result.ok || !brightOK) failed = true
 }
