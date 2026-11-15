@@ -30,6 +30,46 @@ export function normalizeRoute(route: any): THREE.Vector3[] {
   })
 }
 
+/**
+ * 计算画面底边（ndc y=-1）在地面上的落点距离，用于把路线近端铺到底边。
+ * 相机朝地面下方看时返回正数；若视线水平以上则返回 Infinity（无需延长）。
+ */
+export function groundEdgeDistance(camera: THREE.PerspectiveCamera): number {
+  camera.updateMatrixWorld()
+  const ray = new THREE.Vector3(0, -1, 0.5).unproject(camera).sub(camera.position).normalize()
+  if (ray.y >= -1e-4) return Infinity
+  return -camera.position.y / ray.y
+}
+
+/**
+ * 近端兜底：把路线首点沿首段方向朝镜头延伸到画面底边的地面落点，
+ * 保证光带贯穿画面底边。首点若已经比落点更近，原样返回。
+ *
+ * 注意：不能延长到相机身后（近裁剪面之外），那段会从画面顶部穿出。
+ */
+export function extendRouteToCamera(
+  points: THREE.Vector3[],
+  cameraPos: THREE.Vector3,
+  /** 底边落点距相机的水平距离（缺省用 4.5m，390x844 抬 8.9° 时的典型值） */
+  edgeDist = 4.5,
+): THREE.Vector3[] {
+  if (points.length < 2) return points
+  const first = points[0]
+  const second = points[1]
+  const dir = new THREE.Vector3().subVectors(second, first)
+  dir.y = 0
+  if (dir.lengthSq() < 1e-8) return points
+  dir.normalize()
+
+  const flat = new THREE.Vector3(cameraPos.x, 0, cameraPos.z)
+  // 「沿路线方向」的坐标：首点、相机各自到起点的投影
+  const firstAhead = new THREE.Vector3().subVectors(first, flat).dot(dir)
+  if (firstAhead <= 0) return points // 首点已在镜头后方，由调用方处理
+  if (firstAhead <= edgeDist) return points // 已经比落点更近
+  const start = first.clone().addScaledVector(dir, -(firstAhead - edgeDist) - 0.3)
+  return [start, ...points]
+}
+
 /** 平滑 + 按弧长等距采样（全部贴地 y=0），并预计算每点侧向量 */
 export function buildRouteGeometry(rawPoints: THREE.Vector3[], samplesPerMeter = 3, tension = 0.4): RouteGeometry {
   const curve = new THREE.CatmullRomCurve3(rawPoints, false, 'catmullrom', tension)

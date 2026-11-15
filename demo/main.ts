@@ -80,14 +80,20 @@ btnHospital.addEventListener('click', () => { exitCameraMode(); applyScene('hosp
 // ---------- 组件 ----------
 const shotQuery = new URLSearchParams(location.search)
 const laneX = 0.28 // 近端落在车道中线附近（照片消失点约在画面 0.6）
-const straightRoute = [
-  [laneX, -5.5], // 近端落在底栏上方，大约画面 y=700
+// 相机在 z=+1.5、抬头 8.9°，画面底边对应的地面落点约 z=-2.6。
+// 路线起点取到更近一点（z=-1.2），保证带子直接压到屏幕最底边，不留空隙。
+const backZ = -1.2
+type RoutePoint = [number, number]
+const straightRoute: RoutePoint[] = [
+  [laneX, backZ], // 从镜头身后开始，保证贯穿屏幕底边
+  [laneX, -5.5],
   [laneX, -14],
   [laneX, -30],
   [laneX, -48],
   [laneX, -64], // 直行收到地平线，末端圆弧收口
 ]
-const turnRoute = [
+const turnRoute: RoutePoint[] = [
+  [laneX, backZ],
   [laneX, -5.5],
   [laneX, -14],
   [laneX, -20],
@@ -154,9 +160,9 @@ const HOSPITAL = {
   height: 0.48,
   tint: 0,
   slab: 0.055,
-  straight: [[0, -2], [0, -12], [0, -24], [0, -36], [0, -48]] as Array<[number, number]>,
+  straight: [[0, 3.5], [0, -2], [0, -12], [0, -24], [0, -36], [0, -48]] as Array<[number, number]>,
   // 先直行到走廊尽头附近，再以半径 1.8m 只向右弯一次，不先往左甩
-  turn: ([[0, -2], [0, -12], [0, -24], [0, -30]] as Array<[number, number]>).concat(rightArc(0, -30, 1.8, 80, 10)),
+  turn: ([[0, 3.5], [0, -2], [0, -12], [0, -24], [0, -30]] as Array<[number, number]>).concat(rightArc(0, -30, 1.8, 80, 10)),
 }
 function applyScene(id: SceneId) {
   const bend = shotQuery.has('bend')
@@ -242,6 +248,10 @@ if (isShot) {
   document.getElementById('hint')!.style.display = 'none'
   document.getElementById('modeBar')!.style.display = 'none'
   document.getElementById('modeMsg')!.style.display = 'none'
+}
+// ?phone=0：铺满真实视口（按设备实际尺寸验证时用）
+if (new URLSearchParams(location.search).get('phone') === '0') {
+  document.body.classList.add('no-phone')
 }
 // ?grid=1：直接开地面网格（截图用）
 if (new URLSearchParams(location.search).has('grid')) {

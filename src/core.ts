@@ -16,6 +16,8 @@ import {
 } from './config'
 import {
   normalizeRoute,
+  extendRouteToCamera,
+  groundEdgeDistance,
   buildRouteGeometry,
   buildChannelGeometry,
   buildGroundGridSegments,
@@ -386,7 +388,14 @@ export class NaviArrowCore {
   /** 设置/替换路线（局部坐标：米，y 向上） */
   setRoute(route: NonNullable<NaviArrowOptions['route']>, opts?: { tension?: number }) {
     const raw = normalizeRoute(route)
-    this.routeGeo = buildRouteGeometry(raw, 3, opts?.tension ?? 0.4)
+    // 近端兜底：按当前相机把路线延伸到画面底边的地面落点，
+    // 避免任何视口尺寸下出现「带子没顶到底」的空隙。
+    const edgeDist = groundEdgeDistance(this.camera)
+    this.routeGeo = buildRouteGeometry(
+      extendRouteToCamera(raw, this.camera.position, Number.isFinite(edgeDist) ? edgeDist : 4.5),
+      3,
+      opts?.tension ?? 0.4,
+    )
     this.rebuildCurtain()
     if (this.turnSignOn) this.placeTurnSign()
   }

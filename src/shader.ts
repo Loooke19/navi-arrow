@@ -54,8 +54,8 @@ const frag = /* glsl */ `
 
   void main() {
     // 沿程只在贴着镜头时淡入，远端仍保持可见。
+    // 近端不淡出：路线会延伸到镜头身后，被画面底边自然裁掉，不留空隙。
     float fade = mix(1.0, 0.82, smoothstep(0.72, 1.0, vUv.x));
-    fade *= smoothstep(0.35, 1.8, vDist);
     vec3 N = normalize(vNormal);
     // 一直爬到边缘，不在外侧 20% 走平。0.97 处到顶，最外一圈不再另起一根刺。
     float lat = abs(vUv.y * 2.0 - 1.0);
