@@ -1,4 +1,10 @@
 /**
+ * [INPUT]: depends on THREE math/camera primitives from three
+ * [OUTPUT]: provides CameraRigOptions, DeviceOrientationRig, attachDragLook, and startCamera
+ * [POS]: AR camera input helpers within src/, consumed by host apps and demo/main.ts
+ * [PROTOCOL]: Update this header on change, then check GEMINI.md
+ */
+/**
  * 相机/AR 输入：设备方向驱动 + 桌面端拖拽 + getUserMedia 摄像头背景
  */
 import * as THREE from 'three'

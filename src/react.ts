@@ -1,4 +1,10 @@
 /**
+ * [INPUT]: depends on react hooks and createElement from react; NaviArrowCore from ./core; types from ./config
+ * [OUTPUT]: provides NaviArrow React component, NaviArrowProps, and NaviArrowHandle
+ * [POS]: React adapter within src/, bridging declarative props to NaviArrowCore lifecycle and incremental updates
+ * [PROTOCOL]: Update this header on change, then check GEMINI.md
+ */
+/**
  * React 薄包装 <NaviArrow />
  *
  * 核心组件通过 attachShadow 隔离样式与 UI。React 会把传给 <NaviArrow> 的子节点
@@ -47,10 +53,20 @@ export function NaviArrow(props: NaviArrowProps) {
   const bannerKey = JSON.stringify(options.banner ?? null)
   const footerKey = JSON.stringify(options.footer ?? null)
   const routeKey = JSON.stringify(options.route ?? null)
+  const themeKey = JSON.stringify(options.theme ?? null)
   useEffect(() => { coreRef.current?.setBanner((options.banner ?? null) as BannerConfig | null) }, [bannerKey])
   useEffect(() => { coreRef.current?.setFooter((options.footer ?? null) as FooterConfig | null) }, [footerKey])
   useEffect(() => { if (options.route) coreRef.current?.setRoute(options.route) }, [routeKey])
   useEffect(() => { coreRef.current?.setChevrons(!!options.showChevrons) }, [options.showChevrons])
+  useEffect(() => {
+    coreRef.current?.update({
+      curtainHeight: options.curtainHeight,
+      curtainWidth: options.curtainWidth,
+      flowSpeed: options.flowSpeed,
+      theme: options.theme,
+      visible: options.visible,
+    })
+  }, [options.curtainHeight, options.curtainWidth, options.flowSpeed, themeKey, options.visible])
 
   return createElement('div', {
     ref: mountRef,

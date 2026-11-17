@@ -59,10 +59,10 @@ import { NaviArrow } from 'navi-arrow/react'
 | 项 | 类型 | 默认 | 说明 |
 |---|---|---|---|
 | `route` | `[x,z][]` / `[x,y,z][]` / `{points}` | 必填 | 路线（局部坐标，米，y 向上） |
-| `curtainHeight` | number | `0.4` | 光幕顶边离地高度（米） |
-| `curtainWidth` | number | `0.8` | 光幕底部半宽（米） |
-| `theme` | `{primary, highlight, nearOpacity, farOpacity}` | 蓝色主题 | 颜色主题（默认 `#2F7BFF`） |
-| `flowSpeed` | number | `2.5` | 流动亮带循环周期（秒） |
+| `curtainHeight` | number | `0.5` | 竖直光幕顶脊离地高度（米） |
+| `curtainWidth` | number | `1.25` | 光幕通道净宽（米） |
+| `theme` | `{primary, highlight, nearOpacity, farOpacity}` | 蓝色主题 | 颜色主题（默认 `#2F88FF`） |
+| `flowSpeed` | number | `2.6` | 流动亮带循环周期（秒） |
 | `banner` | `BannerConfig` | - | 横幅：`distance` / `action` / `road` / `iconUrl` / `iconChar` / `showSettings` |
 | `footer` | `FooterConfig` | - | 底部：`enabled` / `distance` / `duration` / `arrival` / `exitLabel` / `mapLabel` |
 | `showChevrons` | boolean | `false` | 地面 V 形引导箭头（默认关） |

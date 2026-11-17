@@ -58,9 +58,13 @@ describe('光带亮度与细节', () => {
   })
 
   it('只是整体发白不算蓝光', () => {
-    const render = solid(w, h, (x) => {
+    const render = solid(w, h, (x): [number, number, number] => {
       const base = x < 14 ? [28, 32, 36] : x === 14 ? [210, 210, 200] : [70, 74, 80]
-      return base.map((v) => Math.min(255, v + 20))
+      return [
+        Math.min(255, base[0] + 20),
+        Math.min(255, base[1] + 20),
+        Math.min(255, base[2] + 20),
+      ]
     })
     const r = evaluateGlow(render, photo, w, h, mask)
     expect(r.blueDelta).toBeLessThan(25)

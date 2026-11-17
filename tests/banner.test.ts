@@ -1,24 +1,37 @@
 /**
- * 390px 宽时横幅必须放下「前方20米 右转 进入 门诊二区」，不能把路名裁掉。
+ * [INPUT]: depends on NAVI_UI_STYLE from ../src/ui; depends on chromium from playwright
+ * [OUTPUT]: verifies the 390px-wide banner fully displays「前方20米 右转 进入 门诊二区」without clipping the road name
+ * [POS]: UI layout regression test in tests/, guards the Baidu-style banner against overflow on narrow viewports
+ * [PROTOCOL]: Update this header on change, then check AGENTS.md
  */
 import { describe, it, expect } from 'vitest'
-import { readFileSync } from 'node:fs'
-import { chromium } from 'playwright'
+import { chromium, type Browser } from 'playwright'
+import { NAVI_UI_STYLE } from '../src/ui'
 
-function bannerCss(): string {
-  const src = readFileSync(new URL('../src/core.ts', import.meta.url), 'utf8')
-  const start = src.indexOf('/* ===== 顶部横幅')
-  const end = src.indexOf('/* 右上角 AR 设置')
-  return src.slice(start, end).replace(':host, .na-root', '.na-root')
+/** 本机可能只装了系统 Chrome 或旧版 Playwright 内核，依次回退，避免测试因环境缺失而失败 */
+async function launchBrowser(): Promise<Browser> {
+  const attempts: Array<() => Promise<Browser>> = [
+    () => chromium.launch(),
+    () => chromium.launch({ channel: 'chrome' }),
+  ]
+  let lastErr: unknown
+  for (const attempt of attempts) {
+    try {
+      return await attempt()
+    } catch (e) {
+      lastErr = e
+    }
+  }
+  throw lastErr
 }
 
 describe('banner fit', () => {
   it('390px 下「门诊二区」完整可见', async () => {
-    const browser = await chromium.launch()
+    const browser = await launchBrowser()
     const page = await browser.newPage({ viewport: { width: 390, height: 200 } })
     await page.setContent(`<!DOCTYPE html><html><head><style>
       html,body{margin:0;width:390px}
-      ${bannerCss()}
+      ${NAVI_UI_STYLE}
       .na-root{position:relative;width:390px;height:160px}
     </style></head><body><div class="na-root"><div class="na-banner visible">
       <div class="na-icon"><span>→</span></div>
@@ -45,5 +58,5 @@ describe('banner fit', () => {
     expect(box.road).toBe('门诊二区')
     expect(box.textOverflow).toBeLessThanOrEqual(1)
     expect(box.roadRight).toBeLessThanOrEqual(box.bannerRight + 0.5)
-  })
+  }, 15000)
 })

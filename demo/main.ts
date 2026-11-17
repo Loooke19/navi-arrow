@@ -94,19 +94,18 @@ const straightRoute: RoutePoint[] = [
 ]
 const turnRoute: RoutePoint[] = [
   [laneX, backZ],
-  [laneX, -5.5],
-  [laneX, -14],
-  [laneX, -20],
-  [0.7, -26],
-  [2.4, -30],
-  [4.6, -33.5],   // 路口一带向右弯，大约在画面 y=560–600
-  [6.8, -36.5],
-  [8.0, -39],     // 末端圆弧收到画面 x≈0.8
+  [laneX, -6],
+  [laneX, -12],
+  [0.85, -17.5],
+  [2.5, -22],
+  [4.8, -25.5],   // 更近处平顺向右转弯，立体两侧光幕在镜头前交叉叠透
+  [7.2, -28],
+  [9.0, -30],
 ]
 const navi = createNaviArrow(document.getElementById('navi') as HTMLElement, {
   route: shotQuery.has('bend') ? turnRoute : straightRoute,
-  curtainHeight: 0.5,
-  curtainWidth: 1.62,
+  curtainHeight: 0.68,
+  curtainWidth: 1.50,
   showChevrons: true,
   autoRender: false,
   banner: { distance: '20米后', action: '进入', road: '无名路' },
@@ -156,13 +155,13 @@ const HOSPITAL = {
   horizonY: 0.445,
   vanishX: 0.50,
   aspect: 1400 / 1867,
-  width: 0.85,
-  height: 0.48,
-  tint: 0,
-  slab: 0.055,
-  straight: [[0, 3.5], [0, -2], [0, -12], [0, -24], [0, -36], [0, -48]] as Array<[number, number]>,
-  // 先直行到走廊尽头附近，再以半径 1.8m 只向右弯一次，不先往左甩
-  turn: ([[0, 3.5], [0, -2], [0, -12], [0, -24], [0, -30]] as Array<[number, number]>).concat(rightArc(0, -30, 1.8, 80, 10)),
+  width: 0.86,
+  height: 0.56,
+  straight: [[0, -1.2], [0, -12], [0, -24], [0, -36], [0, -48]] as Array<[number, number]>,
+  // 均匀间距控制点，避免弯道处出现急折或凸起，呈现舒展平滑的大圆角右转
+  turn: ([[0, -1.2], [0, -8], [0, -14]] as Array<[number, number]>)
+    .concat(rightArc(0, -14, 5.2, 76, 8))
+    .concat([[6.2, -20.2]]),
 }
 function applyScene(id: SceneId) {
   const bend = shotQuery.has('bend')
@@ -170,13 +169,10 @@ function applyScene(id: SceneId) {
     img.src = './assets/hospital.jpg'
     navi.params.bandWidth = HOSPITAL.width
     navi.params.railHeight = HOSPITAL.height
-    navi.theme.primary = '#00C8FF'
-    navi.theme.highlight = '#7AF4FF'
-    navi.setSlab(HOSPITAL.slab)
+    navi.theme.primary = '#1EA8FF'
+    navi.theme.highlight = '#8BE6FF'
     navi.setFloorFill(1)
-    navi.setFloorTint(HOSPITAL.tint)
-    navi.setRoute(bend ? HOSPITAL.turn : HOSPITAL.straight, { tension: 0 })
-    navi.setTurnSign(bend)
+    navi.setRoute(bend ? HOSPITAL.turn : HOSPITAL.straight, { tension: bend ? 0.5 : 0 })
     navi.setBanner(bend
       ? { distance: '前方20米', action: '右转 进入', road: '门诊二区' }
       : { distance: '', action: '沿走廊', road: '直行' })
@@ -186,20 +182,18 @@ function applyScene(id: SceneId) {
       const p = navi.setHorizonCalibration({ horizonY: HOSPITAL.horizonY, vanishX: HOSPITAL.vanishX, eyeHeight: 1.6 })
       yawPitch.pitch = THREE.MathUtils.degToRad(p)
       applyLook()
+      syncGuiDisplay()
     }
     if (img.complete && img.naturalWidth) calibrate()
     else img.onload = calibrate
   } else {
     img.src = './assets/street.jpg'
-    navi.params.bandWidth = 1.62
-    navi.params.railHeight = 0.5
-    navi.theme.primary = '#40D8FF'
-    navi.theme.highlight = '#7AEEFF'
-    navi.setSlab(0.09)
+    navi.params.bandWidth = 1.50
+    navi.params.railHeight = 0.68
+    navi.theme.primary = '#2F88FF'
+    navi.theme.highlight = '#8FD8FF'
     navi.setFloorFill(1)
-    navi.setFloorTint(0)
     navi.setRoute(bend ? turnRoute : straightRoute)
-    navi.setTurnSign(false)
     navi.setBanner(bend
       ? { distance: '20米后', action: '右转 进入', road: '无名路' }
       : { distance: '', action: '沿当前道路', road: '直行' })
@@ -207,27 +201,16 @@ function applyScene(id: SceneId) {
     const p = navi.setHorizonCalibration({ horizonY: PHOTO.horizonY, vanishX: PHOTO.vanishX, eyeHeight: 1.6 })
     yawPitch.pitch = THREE.MathUtils.degToRad(p)
     applyLook()
+    syncGuiDisplay()
   }
   navi.applyParams()
   btnStreet.classList.toggle('active', id === 'street')
   btnHospital.classList.toggle('active', id === 'hospital')
   btnCam.classList.remove('active')
 }
-if (shotQuery.get('scene') === 'hospital') applyScene('hospital')
-else applyScene('street')
-
-// 桌面拖拽模拟转头
-attachDragLook(document.getElementById('phone')!, (yaw, pitch) => {
-  if (usingDevice) return
-  yawPitch.yaw = yaw
-  yawPitch.pitch = pitch
-  applyLook()
-}, yawPitch)
-
-// ---------- lil-gui 调参面板 ----------
-const gui = new GUI({ title: 'navi-arrow 调参' })
+let gui: GUI | null = null
 const guiState = {
-  颜色: '#40D8FF',
+  颜色: '#2F88FF',
   带宽: navi.params.bandWidth,
   边缘光幕高: navi.params.railHeight,
   透明度: navi.params.opacity,
@@ -240,6 +223,30 @@ const guiState = {
   随设备转动: false,
   V形箭头: true,
 }
+function syncGuiDisplay() {
+  if (!gui) return
+  guiState.颜色 = navi.theme.primary
+  guiState.带宽 = navi.params.bandWidth
+  guiState.边缘光幕高 = navi.params.railHeight
+  guiState.俯仰角 = Math.round(THREE.MathUtils.radToDeg(yawPitch.pitch) * 10) / 10
+  guiState.地平线 = navi.horizon.horizonY
+  gui.controllersRecursive().forEach((c) => c.updateDisplay())
+}
+
+if (shotQuery.get('scene') === 'hospital') applyScene('hospital')
+else applyScene('street')
+
+// 桌面拖拽模拟转头
+attachDragLook(document.getElementById('phone')!, (yaw, pitch) => {
+  if (usingDevice) return
+  yawPitch.yaw = yaw
+  yawPitch.pitch = pitch
+  applyLook()
+}, yawPitch)
+
+// ---------- lil-gui 调参面板 ----------
+gui = new GUI({ title: 'navi-arrow 调参' })
+syncGuiDisplay()
 
 // 截图模式（?shot=1）：隐藏 GUI 和提示
 const isShot = new URLSearchParams(location.search).has('shot')

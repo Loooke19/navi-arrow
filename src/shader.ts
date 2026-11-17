@@ -1,114 +1,188 @@
 /**
- * 光幕材质（光片，不是实体）：
- * 全部 AdditiveBlending + depthWrite false。片元 rgb 是光的颜色，alpha 是光量，
- * 帧缓冲里累加 color*alpha（黑底）。最终合成把这份光加到照片上，alpha 置 0，
- * 所以只会提亮，绝不会压暗路面。
- *
- * uMode 0 地面带：青蓝 #3AA0FF→#66C8FF，中心约 0.34，两侧羽化，沿程 1 → 0.35 → 0
- * uMode 1 侧光幕：转弯处贴地约 0.45 收到顶边，顶上一条青蓝细线（不是白线）
+ * [INPUT]: depends on THREE shader/material/blending primitives from three
+ * [OUTPUT]: provides createVolumetricCurtainMaterial, createGroundAuraMaterial, createChevronMaterial, createCompositeShader, and legacy material aliases
+ * [POS]: GLSL shader layer within src/, rendering the DJI-inspired volumetric U-curtain, feathered ground aura, and HDR-to-display composite pass
+ * [PROTOCOL]: Update this header on change, then check AGENTS.md
  */
 import * as THREE from 'three'
 
-const vert = /* glsl */ `
-  attribute float aRim;
-  attribute float aWall;
+export interface VolumetricUniforms {
+  uColor: { value: THREE.Color }
+  uHighlight: { value: THREE.Color }
+  uOpacity: { value: number }
+  uTime: { value: number }
+  uFlowSpeed: { value: number }
+  uScanLines: { value: number }
+  uReveal: { value: number }
+  uFloorGain: { value: number }
+  uBgBright: { value: number }
+}
+
+const curtainVert = /* glsl */ `
+  attribute float aHNorm;
+  attribute float aArchY;
+  attribute float aDist;
+  attribute float aTurn;
   uniform float uReveal;
   varying vec2 vUv;
   varying vec3 vWorldPos;
   varying vec3 vNormal;
-  varying float vDist;
-  varying float vRim;
-  varying float vWall;
+  varying vec3 vViewDir;
+  varying float vCamDist;
+  varying float vHNorm;
+  varying float vArchY;
+  varying float vDistM;
+  varying float vTurn;
 
   void main() {
     vUv = uv;
-    vRim = aRim;
-    vWall = aWall;
+    vHNorm = aHNorm;
+    vArchY = aArchY;
+    vDistM = aDist;
+    vTurn = aTurn;
+
     vec3 p = position;
-    float reveal = clamp(uReveal * 1.25 - vUv.x * 0.25, 0.0, 1.0);
+    // 出现时从近到远平滑生长展开（600ms ease-out）
+    float reveal = clamp(uReveal * 1.30 - vUv.x * 0.30, 0.0, 1.0);
     p.y *= reveal;
+
     vec4 wp = modelMatrix * vec4(p, 1.0);
     vWorldPos = wp.xyz;
     vNormal = normalize(mat3(modelMatrix) * normal);
+    vViewDir = cameraPosition - wp.xyz;
     vec4 mv = viewMatrix * wp;
-    vDist = -mv.z;
+    vCamDist = -mv.z;
     gl_Position = projectionMatrix * mv;
   }
 `
 
-const frag = /* glsl */ `
+const curtainFrag = /* glsl */ `
   precision highp float;
   uniform vec3 uColor;
-  uniform vec3 uFarColor;
+  uniform vec3 uHighlight;
   uniform float uOpacity;
   uniform float uTime;
   uniform float uFlowSpeed;
-  uniform float uFloorGain;
-  uniform float uBright;
+  uniform float uScanLines;
+  uniform float uReveal;
+  uniform float uBgBright;
+
   varying vec2 vUv;
   varying vec3 vWorldPos;
   varying vec3 vNormal;
-  varying float vDist;
-  varying float vRim;
-  varying float vWall;
+  varying vec3 vViewDir;
+  varying float vCamDist;
+  varying float vHNorm;
+  varying float vArchY;
+  varying float vDistM;
+  varying float vTurn;
 
   void main() {
-    // 沿程只在贴着镜头时淡入，远端仍保持可见。
-    // 近端不淡出：路线会延伸到镜头身后，被画面底边自然裁掉，不留空隙。
-    float fade = mix(1.0, 0.82, smoothstep(0.72, 1.0, vUv.x));
-    vec3 N = normalize(vNormal);
-    // 一直爬到边缘，不在外侧 20% 走平。0.97 处到顶，最外一圈不再另起一根刺。
-    float lat = abs(vUv.y * 2.0 - 1.0);
-    float rise = pow(smoothstep(0.10, 0.97, lat), 1.2);
-    float sideK = 1.0 - smoothstep(0.30, 0.84, abs(N.y));
-    float fw = max(fwidth(vRim), 1e-4);
-    float px = (1.0 - vRim) / fw;
-    float farT = smoothstep(4.0, 40.0, vDist);
-    float corePx = mix(0.42, 0.22, farT);
-    float line = exp(-0.5 * (px / corePx) * (px / corePx));
-    line *= smoothstep(0.9, 0.995, vRim) * (1.0 - sideK);
+    float tAbs = vHNorm;
+    if (tAbs >= 1.038 || uReveal <= 0.005) discard;
 
-    if (uBright > 0.5) {
-      // 白地板：正常透明混合。饱和青 #00B4E6，中心约 0.11，边缘约 0.58。
-      // 外缘若是一条被裁平的等亮平台，从左取峰落在外沿、从右取峰落在内沿。
-      // 把平台向内收一点，两侧峰值才落在同一侧。坡面主体不动。
-      float riseEdge = pow(smoothstep(0.10, 1.0, lat), 1.15);
-      vec3 cyan = vec3(0.0, 0.706, 0.902);
-      float alpha = mix(0.11, 0.58, riseEdge);
-      alpha = mix(alpha, 0.62, sideK);
-      alpha += line * 0.05;
-      float fwLat = max(fwidth(lat), 1e-4);
-      float edgePx = clamp((1.0 - lat) / fwLat, 0.0, 4.0);
-      float rimCrest = mix(0.68, 1.0, exp(-1.6 * edgePx * edgePx));
-      float fwY = max(fwidth(vWorldPos.y), 1e-4);
-      float yPx = clamp(vWorldPos.y / fwY, 0.0, 4.0);
-      float sideCrest = mix(0.55, 1.0, exp(-1.35 * yPx * yPx));
-      float crest = mix(rimCrest, sideCrest, smoothstep(0.20, 0.80, sideK));
-      float edgeZone = max(smoothstep(0.82, 0.97, lat), smoothstep(0.25, 0.85, sideK));
-      alpha *= mix(1.0, crest, edgeZone);
-      alpha = min(alpha, 0.66) * fade * uOpacity;
-      if (alpha < 0.02) discard;
-      gl_FragColor = vec4(cyan * alpha, alpha);
-    } else {
-      float shape = 0.20 + 0.42 * rise;
-      float cover = mix(shape, 0.68, sideK) * fade * uOpacity;
-      vec3 col = mix(uColor, uFarColor, clamp(vUv.x * 0.22, 0.0, 1.0));
-      float lineI = line * 0.02 * fade * uOpacity;
-      vec3 lineCol = vec3(0.55, 0.88, 0.98);
-      float lightK = 0.50;
-      vec3 added = col * cover * lightK + lineCol * lineI;
-      float peak = max(added.r, max(added.g, added.b));
-      if (peak > 0.32) added *= 0.32 / peak;
-      float ink = (0.015 + 0.05 * rise) * fade * (1.0 - 0.45 * sideK);
-      if (cover + lineI < 0.015) discard;
-      gl_FragColor = vec4(added, ink);
-    }
+    // 快速绕行倒 U（∩）脉冲光环（从近端底部出发，沿倒 U 余弦拱罩快速向前扫过并在尽头消散）
+    float cycle = max(uFlowSpeed, 0.4);
+    float pulseCycle = max(cycle * 0.85, 0.8);
+    float pulsePhase = fract(uTime / pulseCycle);
+    float sweepT = clamp(pulsePhase / 0.78, 0.0, 1.0);
+    float pulseU = mix(-0.04, 1.03, pow(sweepT, 1.35));
+    float dPulse = (vUv.x + 0.016 * tAbs * tAbs) - pulseU;
+    float pulseShape = (dPulse >= 0.0)
+      ? exp(-pow(dPulse / 0.022, 2.0))
+      : exp(-pow(dPulse / 0.055, 2.0));
+    float pulseWindow = smoothstep(0.0, 0.06, pulsePhase) * (1.0 - smoothstep(0.66, 0.78, pulsePhase));
+    float pulseEndFade = 1.0 - smoothstep(0.84, 1.0, vUv.x);
+    float pulseGlow = pulseShape * pulseWindow * pulseEndFade;
+
+    // 中心 28% 走廊在非脉冲位置保持 0% 完全透明；脉冲经过时合拢为完整倒 U 拱形光环
+    if (tAbs <= 0.28 && pulseGlow <= 0.004) discard;
+
+    // 1. 柔和宽幅渐升核心（0.28 -> 1.0 平滑爬升，压抑两侧过亮堆积）
+    float gradT = clamp((tAbs - 0.28) / 0.72, 0.0, 1.0);
+    float figmaRamp = pow(gradT, 1.25);
+
+    // 2. 纯解析连续体积增益（不依赖多边形顶点法线，彻底消除纯黑背景下的纵向折痕）
+    float volumeBoost = 0.68 + 0.22 * gradT + 0.14 * vTurn;
+
+    // 3. 大疆同款锐利抗锯齿外边界（1.5px 干净收齐，外侧零模糊雾）
+    float fw = max(fwidth(tAbs), 0.004);
+    float edgeAA = 1.0 - smoothstep(1.0 - fw * 1.1, 1.0 + fw * 0.7, tAbs);
+
+    // 4. 顺滑沿程呼吸流光（去掉正弦纵向条纹，保证两侧光幕细腻均匀）
+    float wave = 0.5 + 0.5 * sin(vDistM * 0.32 - (uTime / cycle) * 6.2831853);
+    float flow = 1.0 + 0.08 * pow(wave, 2.0);
+
+    // 5. 纵深空气衰减
+    float distFade = mix(1.0, 0.52, smoothstep(6.0, 54.0, vCamDist))
+                   * mix(1.0, 0.78, smoothstep(0.80, 1.0, vUv.x));
+    float revealFade = smoothstep(0.0, 0.25, clamp(uReveal * 1.30 - vUv.x * 0.30, 0.0, 1.0));
+
+    float baseEnergy = figmaRamp * volumeBoost * edgeAA * flow * distFade * revealFade * uOpacity;
+    float pulseEnergy = pulseGlow * (0.85 + 0.75 * figmaRamp) * edgeAA * revealFade * uOpacity * 1.35;
+    float totalEnergy = baseEnergy + pulseEnergy;
+    if (totalEnergy < 0.0025) discard;
+
+    // 色彩层次：沿立体弧面从主蓝柔和过渡到清透亮青，脉冲光环处叠加冰青高光
+    float hiMix = clamp(gradT * 0.52 + vTurn * 0.18, 0.0, 0.78);
+    vec3 baseCol = mix(uColor, uHighlight, hiMix);
+    vec3 pulseCol = mix(uHighlight, vec3(0.84, 0.97, 1.0), 0.52);
+
+    vec3 rgb = baseCol * (baseEnergy * 0.72) + pulseCol * pulseEnergy;
+    float baseDensity = figmaRamp * (0.48 + 0.18 * gradT) * edgeAA * distFade * revealFade * uOpacity;
+    float pulseDensity = pulseGlow * (0.48 + 0.32 * figmaRamp) * edgeAA * revealFade * uOpacity;
+    float density = clamp(baseDensity + pulseDensity, 0.0, 0.92);
+    gl_FragColor = vec4(rgb, density);
+  }
+`
+
+const groundVert = /* glsl */ `
+  attribute float aLat;
+  attribute float aDist;
+  uniform float uReveal;
+  varying vec2 vUv;
+  varying float vLat;
+  varying float vDistM;
+  varying float vCamDist;
+
+  void main() {
+    vUv = uv;
+    vLat = aLat;
+    vDistM = aDist;
+    vec4 wp = modelMatrix * vec4(position, 1.0);
+    vec4 mv = viewMatrix * wp;
+    vCamDist = -mv.z;
+    gl_Position = projectionMatrix * mv;
+  }
+`
+
+const groundFrag = /* glsl */ `
+  precision highp float;
+  uniform vec3 uColor;
+  uniform vec3 uHighlight;
+  uniform float uOpacity;
+  uniform float uTime;
+  uniform float uFlowSpeed;
+  uniform float uScanLines;
+  uniform float uReveal;
+  uniform float uFloorGain;
+  uniform float uBgBright;
+
+  varying vec2 vUv;
+  varying float vLat;
+  varying float vDistM;
+  varying float vCamDist;
+
+  void main() {
+    // 中心区域按 Figma 渐变保持 0% 全透明，不额外叠底色遮盖渐变
+    discard;
   }
 `
 
 const chevronFrag = /* glsl */ `
   precision highp float;
   uniform vec3 uColor;
+  uniform vec3 uHighlight;
   uniform float uOpacity;
   uniform float uFade;
   uniform float uWidth;
@@ -117,195 +191,159 @@ const chevronFrag = /* glsl */ `
   uniform float uPlaneL;
   varying vec2 vUv;
 
-  float segT(vec2 p, vec2 a, vec2 b) {
-    vec2 ab = b - a;
-    return clamp(dot(p - a, ab) / max(dot(ab, ab), 1e-6), 0.0, 1.0);
+  float sdSegment(vec2 p, vec2 a, vec2 b) {
+    vec2 pa = p - a;
+    vec2 ba = b - a;
+    float h = clamp(dot(pa, ba) / max(dot(ba, ba), 1e-6), 0.0, 1.0);
+    return length(pa - ba * h);
   }
-  float segDist(vec2 p, vec2 a, vec2 b) {
-    float t = segT(p, a, b);
-    vec2 ab = b - a;
-    return length(p - a - ab * t);
+
+  float sdChevron(vec2 p, vec2 apex, float halfSpanX, float dropY) {
+    vec2 wingL = vec2(-halfSpanX, apex.y - dropY);
+    vec2 wingR = vec2(halfSpanX, apex.y - dropY);
+    return min(sdSegment(p, apex, wingL), sdSegment(p, apex, wingR));
   }
 
   void main() {
-    // +forward（uv.y 小的一端）朝 lookAt 的前方，也就是消失点
     float across = (vUv.x - 0.5) * uPlaneW;
     float forward = (0.5 - vUv.y) * uPlaneL;
     vec2 p = vec2(across, forward);
-    vec2 tip = vec2(0.0, uLength * 0.5);
-    vec2 wingR = vec2(uWidth * 0.5, -uLength * 0.5);
-    vec2 wingL = vec2(-uWidth * 0.5, -uLength * 0.5);
-    float dR = segDist(p, tip, wingR);
-    float dL = segDist(p, tip, wingL);
-    float t = dR < dL ? segT(p, tip, wingR) : segT(p, tip, wingL);
-    float d = min(dR, dL);
-    // 臂宽约为箭头宽度的 0.25；尖端收细，开口保持利落的 V
-    // 臂稍加粗，边缘收紧，远看仍是一个清楚的 V，不是一团光
-    float rad = mix(uWidth * 0.07, uWidth * 0.16, smoothstep(0.0, 0.3, t));
-    float core = 1.0 - smoothstep(rad * 0.55, rad * 1.02, d);
-    float soft = 1.0 - smoothstep(rad * 0.9, rad * 1.28, d);
-    float m = max(core, soft * 0.28);
-    m *= 1.0 - smoothstep(0.86, 1.0, t);
-    float cover = m * uFade;
-    if (cover < 0.02) discard;
-    vec3 col = mix(uColor, vec3(0.55, 0.98, 1.0), clamp(core, 0.0, 1.0));
-    // rgb 继续加法；alpha 让白地板上红通道降下来，V 才不会被裁成纯白
-    gl_FragColor = vec4(col * cover * uOpacity, cover * 0.5);
+
+    // 百度 AR 风格双层圆角厚箭头：粗胶囊双臂 + 纯白描边 + 亮天蓝渐变填充 + 柔蓝底晕
+    float W = uWidth;
+    float R = W * 0.175;
+    float halfSpanX = W * 0.32;
+    float dropY = halfSpanX * 0.72;
+    float strokeW = R * 0.20;
+
+    float yFront = R * 1.25;
+    float yRear = yFront - R * 2.45;
+
+    float dFront = sdChevron(p, vec2(0.0, yFront), halfSpanX, dropY);
+    float dRear = sdChevron(p, vec2(0.0, yRear), halfSpanX, dropY);
+
+    float aa = max(max(fwidth(dFront), fwidth(dRear)), 0.0045 * W);
+
+    // 外轮廓柔蓝底晕（先铺在最底层）
+    float dMin = min(dFront, dRear);
+    float dropGlow = exp(-0.5 * pow(max(0.0, dMin - R * 0.88) / (R * 0.68), 2.0)) * 0.24;
+
+    // 柔化协调的双层圆角半透明流光箭头：保持双层圆角形态，柔化白边并统一到光幕亮蓝渐变色系
+    vec3 outPremul = mix(uColor, uHighlight, 0.35) * dropGlow;
+    float outAlpha = dropGlow;
+
+    for (int k = 0; k < 2; k++) {
+      float d = (k == 0) ? dRear : dFront;
+      float outer = 1.0 - smoothstep(R - aa * 1.35, R + aa * 1.35, d);
+      if (outer < 0.002) continue;
+      float inner = 1.0 - smoothstep(R - strokeW - aa * 1.25, R - strokeW + aa * 1.25, d);
+      float border = max(0.0, outer - inner);
+
+      // 与光幕同色系半透明渐变：后层偏主亮蓝、前层偏冰青亮蓝
+      float grad = clamp(0.5 + (p.x / max(W, 1e-4)) * 0.50 + ((p.y - ((k == 0) ? yRear : yFront)) / max(R * 2.5, 1e-4)) * 0.45, 0.0, 1.0);
+      vec3 rearCol = mix(uColor * 0.92, mix(uColor, uHighlight, 0.45), grad);
+      vec3 frontCol = mix(mix(uColor, uHighlight, 0.28), uHighlight, grad);
+      vec3 fillCol = (k == 0) ? rearCol : frontCol;
+
+      float fillA = (k == 0) ? 0.44 : 0.52;
+      float borderA = (k == 0) ? 0.56 : 0.66;
+      vec3 borderCol = mix(uHighlight, vec3(0.94, 0.98, 1.0), 0.55);
+
+      vec3 layerPremul = fillCol * (inner * fillA) + borderCol * (border * borderA);
+      float layerA = clamp(inner * fillA + border * borderA, 0.0, 0.72);
+
+      outPremul = layerPremul + outPremul * (1.0 - layerA);
+      outAlpha = layerA + outAlpha * (1.0 - layerA);
+    }
+
+    float fade = clamp(uFade * min(1.0, uOpacity), 0.0, 1.0);
+    outPremul *= fade;
+    outAlpha = clamp(outAlpha * fade, 0.0, 0.76);
+    if (outAlpha < 0.006) discard;
+    gl_FragColor = vec4(outPremul, outAlpha);
   }
 `
 
-export interface NaviUniforms {
-  uColor: { value: THREE.Color }
-  uFarColor: { value: THREE.Color }
-  uOpacity: { value: number }
-  uTime: { value: number }
-  uFlowSpeed: { value: number }
-  uScanLines: { value: number }
-  uReveal: { value: number }
-  uMode: { value: number }
-  uFloorGain: { value: number }
-  uBright: { value: number }
-}
-
-function baseMaterial(uniforms: NaviUniforms): THREE.ShaderMaterial {
+function createTransmissiveAdditiveMaterial(
+  vertexShader: string,
+  fragmentShader: string,
+  uniforms: Record<string, { value: any }>,
+): THREE.ShaderMaterial {
   return new THREE.ShaderMaterial({
-    vertexShader: vert,
-    fragmentShader: frag,
-    uniforms: uniforms as any,
+    vertexShader,
+    fragmentShader,
+    uniforms,
     transparent: true,
     depthWrite: false,
     depthTest: false,
     side: THREE.DoubleSide,
+    // RGB 线性累加体积光能量，Alpha 按光学透射率 1 - (1 - a1)(1 - a2) 合成
     blending: THREE.CustomBlending,
     blendEquation: THREE.AddEquation,
     blendSrc: THREE.OneFactor,
     blendDst: THREE.OneFactor,
     blendSrcAlpha: THREE.OneFactor,
-    blendDstAlpha: THREE.OneFactor,
+    blendDstAlpha: THREE.OneMinusSrcAlphaFactor,
     toneMapped: false,
   })
 }
 
-/** 极淡的青色衬底。只写入少量 alpha，让亮地板上也看得出青色，不压暗。 */
-export function createFloorTintMaterial(color = '#40D8FF', amount = 0): THREE.ShaderMaterial {
-  return new THREE.ShaderMaterial({
-    uniforms: {
-      uColor: { value: new THREE.Color(color) },
-      uAmount: { value: amount },
-    },
-    vertexShader: /* glsl */ `
-      varying vec2 vUv;
-      void main() {
-        vUv = uv;
-        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-      }
-    `,
-    fragmentShader: /* glsl */ `
-      uniform vec3 uColor;
-      uniform float uAmount;
-      varying vec2 vUv;
-      void main() {
-        if (uAmount < 0.001) discard;
-        // 衬底也跟着横向变：中心不超过整段的约三分之一，避免把中间染实
-        float lat = abs(vUv.y * 2.0 - 1.0);
-        float rise = pow(smoothstep(0.10, 0.97, lat), 1.2);
-        float shape = mix(0.11, 0.58, rise);
-        float amt = uAmount * shape;
-        gl_FragColor = vec4(uColor * amt, amt);
-      }
-    `,
-    transparent: true,
-    depthWrite: false,
-    depthTest: false,
-    side: THREE.DoubleSide,
-    blending: THREE.CustomBlending,
-    blendEquation: THREE.AddEquation,
-    blendSrc: THREE.OneFactor,
-    blendDst: THREE.OneFactor,
-    blendSrcAlpha: THREE.OneFactor,
-    blendDstAlpha: THREE.OneFactor,
-    toneMapped: false,
-  })
-}
-
-export function createBandMaterial(opts: {
+function makeVolumetricUniforms(opts: {
   color: string
-  farColor: string
+  highlight: string
   opacity: number
   flowSpeed: number
   scanLines: number
-}): THREE.ShaderMaterial {
-  const uniforms: NaviUniforms = {
+}): VolumetricUniforms {
+  return {
     uColor: { value: new THREE.Color(opts.color) },
-    uFarColor: { value: new THREE.Color(opts.farColor) },
+    uHighlight: { value: new THREE.Color(opts.highlight) },
     uOpacity: { value: opts.opacity },
     uTime: { value: 0 },
     uFlowSpeed: { value: opts.flowSpeed },
     uScanLines: { value: opts.scanLines },
     uReveal: { value: 1 },
-    uMode: { value: 0 },
     uFloorGain: { value: 1 },
-    uBright: { value: 0 },
+    uBgBright: { value: 0 },
   }
-  return baseMaterial(uniforms)
 }
 
-export function createRailMaterial(opts: {
+/** 竖直 U 型立体光幕材质 */
+export function createVolumetricCurtainMaterial(opts: {
   color: string
-  farColor: string
+  highlight: string
   opacity: number
   flowSpeed: number
+  scanLines: number
 }): THREE.ShaderMaterial {
-  const m = createBandMaterial({ ...opts, scanLines: 12 })
-  m.uniforms.uMode.value = 1
-  return m
+  const uniforms = makeVolumetricUniforms(opts)
+  return createTransmissiveAdditiveMaterial(curtainVert, curtainFrag, uniforms as any)
 }
 
-/** 贴地 V，尖端朝前。opacity 约 1 时中心清楚可读，边缘仍然软。 */
-export function createChevronMaterial(color: string, opacity = 1.05, size?: { width: number; length: number; planeW: number; planeL: number }): THREE.ShaderMaterial {
-  const s = size ?? { width: 0.6, length: 0.23, planeW: 0.9, planeL: 0.55 }
-  return new THREE.ShaderMaterial({
-    uniforms: {
-      uColor: { value: new THREE.Color(color) },
-      uOpacity: { value: opacity },
-      uFade: { value: 1 },
-      uWidth: { value: s.width },
-      uLength: { value: s.length },
-      uPlaneW: { value: s.planeW },
-      uPlaneL: { value: s.planeL },
-    },
-    vertexShader: /* glsl */ `
-      varying vec2 vUv;
-      void main() {
-        vUv = uv;
-        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-      }
-    `,
-    fragmentShader: chevronFrag,
-    transparent: true,
-    depthWrite: false,
-    depthTest: false,
-    blending: THREE.CustomBlending,
-    blendEquation: THREE.AddEquation,
-    blendSrc: THREE.OneFactor,
-    blendDst: THREE.OneFactor,
-    blendSrcAlpha: THREE.OneFactor,
-    blendDstAlpha: THREE.OneFactor,
-    toneMapped: false,
-    side: THREE.DoubleSide,
-  })
+/** 贴地柔光衬底 + 外侧高斯羽化材质 */
+export function createGroundAuraMaterial(opts: {
+  color: string
+  highlight: string
+  opacity: number
+  flowSpeed: number
+  scanLines: number
+}): THREE.ShaderMaterial {
+  const uniforms = makeVolumetricUniforms(opts)
+  return createTransmissiveAdditiveMaterial(groundVert, groundFrag, uniforms as any)
 }
 
 /**
- * 转弯处立着的半透明标牌：对着镜头，中间一个指向转弯方向的 V。
- * rgb 加法，alpha 只压在箭头和淡幕上，亮背景上也能看出青色。
+ * 最终 HDR 体积光合成着色器：
+ * - 暗/常规背景（uBgBright → 0）：采用柔和指数色调映射 1 - exp(-L) 叠加发光，绝不压暗路面，且完整保留双层光幕叠透高光；
+ * - 亮白背景（uBgBright → 1，如医院抛光白地砖/强光实景）：平滑过渡为清透天青滤光混合，外圈 Bloom 光晕同样柔和可见。
  */
-export function createTurnSignMaterial(color = '#00C8FF'): THREE.ShaderMaterial {
-  return new THREE.ShaderMaterial({
+export function createCompositeShader(primaryColor: string, highlightColor: string) {
+  return {
     uniforms: {
-      uColor: { value: new THREE.Color(color) },
-      uOpacity: { value: 1 },
-      uDir: { value: 1 },
+      tDiffuse: { value: null },
+      uBgBright: { value: 0 },
+      uTintPrimary: { value: new THREE.Color(primaryColor) },
+      uTintHighlight: { value: new THREE.Color(highlightColor) },
     },
     vertexShader: /* glsl */ `
       varying vec2 vUv;
@@ -316,33 +354,71 @@ export function createTurnSignMaterial(color = '#00C8FF'): THREE.ShaderMaterial 
     `,
     fragmentShader: /* glsl */ `
       precision highp float;
-      uniform vec3 uColor;
-      uniform float uOpacity;
-      uniform float uDir;
+      uniform sampler2D tDiffuse;
+      uniform float uBgBright;
+      uniform vec3 uTintPrimary;
+      uniform vec3 uTintHighlight;
       varying vec2 vUv;
 
-      float segDist(vec2 p, vec2 a, vec2 b) {
-        vec2 ab = b - a;
-        float t = clamp(dot(p - a, ab) / max(dot(ab, ab), 1e-6), 0.0, 1.0);
-        return length(p - a - ab * t);
-      }
-
       void main() {
-        vec2 p = vUv - 0.5;
-        p.x *= uDir;
-        float panel = smoothstep(0.52, 0.30, length(p * vec2(1.05, 1.15)));
-        vec2 tip = vec2(0.20, 0.0);
-        vec2 wingU = vec2(-0.18, 0.30);
-        vec2 wingD = vec2(-0.18, -0.30);
-        float d = min(segDist(p, tip, wingU), segDist(p, tip, wingD));
-        float arrow = 1.0 - smoothstep(0.07, 0.125, d);
-        float ink = max(panel * 0.22, arrow * 0.62) * uOpacity;
-        float glow = (panel * 0.28 + arrow * 1.15) * uOpacity;
-        if (ink < 0.015) discard;
-        vec3 col = mix(uColor, vec3(0.62, 0.98, 1.0), clamp(arrow, 0.0, 1.0));
-        gl_FragColor = vec4(col * glow, ink);
+        vec4 c = texture2D(tDiffuse, vUv);
+        vec3 hdr = max(c.rgb, vec3(0.0));
+        float energy = max(hdr.r, max(hdr.g, hdr.b));
+        float softGate = smoothstep(0.0, 0.006, energy);
+        hdr *= softGate;
+
+        // 1. 常规/暗色路面：软肩色调映射，高能叠透处自然泛起清透冰青亮泽，适度保留蓝色浓度不被高光冲白
+        vec3 darkLight = vec3(1.0) - exp(-hdr * 1.15);
+        float peakT = smoothstep(0.65, 1.75, energy) * 0.26;
+        darkLight = mix(darkLight, mix(uTintHighlight, vec3(0.86, 0.97, 1.0), 0.35) * min(1.0, energy * 0.80), peakT);
+        float darkAlpha = clamp(c.a * 0.72, 0.0, 0.88) * softGate;
+
+        // 2. 高亮白色地面（如医院白瓷砖）：透明度严格随 c.a 线性平滑过渡，不人为抬高外缘不透明度导致"像断开一样"
+        float minC = min(hdr.r, min(hdr.g, hdr.b));
+        float sat = clamp((energy - minC) / max(energy, 1e-4), 0.0, 1.0);
+        float brightAlpha = clamp(c.a * 0.95, 0.0, 0.86) * softGate;
+        float hiRatio = smoothstep(0.24, 0.98, energy);
+        vec3 themeTint = mix(uTintPrimary, uTintHighlight, hiRatio * 0.58);
+        vec3 normHdr = clamp(hdr / max(energy, 1e-4), 0.0, 1.0);
+        vec3 graphicTint = mix(vec3(0.97, 0.99, 1.0), normHdr, smoothstep(0.08, 0.42, sat));
+        vec3 brightTint = mix(themeTint, graphicTint, smoothstep(0.42, 0.80, c.a));
+        vec3 brightPremul = brightTint * brightAlpha;
+
+        vec3 outRgb = mix(darkLight, brightPremul, clamp(uBgBright, 0.0, 1.0));
+        float outAlpha = mix(darkAlpha, brightAlpha, clamp(uBgBright, 0.0, 1.0));
+        gl_FragColor = vec4(outRgb, outAlpha);
       }
     `,
+  }
+}
+
+/** 贴地双层圆角 V 引导箭头材质（premultiplied NormalBlending，白边与蓝填充不被底部光带冲白） */
+export function createChevronMaterial(
+  color: string,
+  opacity = 0.85,
+  size?: { width: number; length: number; planeW: number; planeL: number },
+  highlight = '#8AD4FF',
+): THREE.ShaderMaterial {
+  const s = size ?? { width: 0.6, length: 0.23, planeW: 0.9, planeL: 0.9 }
+  return new THREE.ShaderMaterial({
+    vertexShader: /* glsl */ `
+      varying vec2 vUv;
+      void main() {
+        vUv = uv;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }
+    `,
+    fragmentShader: chevronFrag,
+    uniforms: {
+      uColor: { value: new THREE.Color(color) },
+      uHighlight: { value: new THREE.Color(highlight) },
+      uOpacity: { value: opacity },
+      uFade: { value: 1 },
+      uWidth: { value: s.width },
+      uLength: { value: s.length },
+      uPlaneW: { value: s.planeW },
+      uPlaneL: { value: s.planeL },
+    },
     transparent: true,
     depthWrite: false,
     depthTest: false,
@@ -350,12 +426,43 @@ export function createTurnSignMaterial(color = '#00C8FF'): THREE.ShaderMaterial 
     blending: THREE.CustomBlending,
     blendEquation: THREE.AddEquation,
     blendSrc: THREE.OneFactor,
-    blendDst: THREE.OneFactor,
+    blendDst: THREE.OneMinusSrcAlphaFactor,
     blendSrcAlpha: THREE.OneFactor,
-    blendDstAlpha: THREE.OneFactor,
+    blendDstAlpha: THREE.OneMinusSrcAlphaFactor,
     toneMapped: false,
   })
 }
 
-/** 兼容旧 API 名称 */
-export const createCurtainMaterial = createBandMaterial
+/** 兼容旧版导出名称 */
+export function createBandMaterial(opts: {
+  color: string
+  farColor: string
+  opacity: number
+  flowSpeed: number
+  scanLines: number
+}): THREE.ShaderMaterial {
+  return createGroundAuraMaterial({
+    color: opts.color,
+    highlight: opts.farColor,
+    opacity: opts.opacity,
+    flowSpeed: opts.flowSpeed,
+    scanLines: opts.scanLines,
+  })
+}
+
+export function createRailMaterial(opts: {
+  color: string
+  farColor: string
+  opacity: number
+  flowSpeed: number
+}): THREE.ShaderMaterial {
+  return createVolumetricCurtainMaterial({
+    color: opts.color,
+    highlight: opts.farColor,
+    opacity: opts.opacity,
+    flowSpeed: opts.flowSpeed,
+    scanLines: 14,
+  })
+}
+
+export const createCurtainMaterial = createVolumetricCurtainMaterial

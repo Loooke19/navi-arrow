@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import * as THREE from 'three'
-import { normalizeRoute, buildRouteGeometry, buildBandGeometry, buildEdgeLinePoints, buildRailGeometry, buildChannelGeometry, pointAtDistance, routeTurnFactors, bendAnchor } from '../src/route'
+import { normalizeRoute, buildRouteGeometry, buildBandGeometry, buildEdgeLinePoints, buildRailGeometry, buildChannelGeometry, buildVolumetricCurtainGeometry, CURTAIN_TOP_HEADROOM, GROUND_OUTER_FEATHER, pointAtDistance, routeTurnFactors, bendAnchor } from '../src/route'
 
 const route = [
   [0, 0],
@@ -153,5 +153,30 @@ describe('route geometry', () => {
     const pEnd = pointAtDistance(g, 9999)
     expect(pEnd.x).toBeCloseTo(8, 0)
     expect(pEnd.z).toBeCloseTo(-20, 0)
+  })
+
+  it('立体 U 型光幕与地面羽化带：包含顶部留白 headroom 与外侧羽化 lat', () => {
+    const g = buildRouteGeometry(normalizeRoute(route), 4)
+    const { curtain, ground } = buildVolumetricCurtainGeometry(g, 0.75, 0.5)
+    const hNorm = curtain.getAttribute('aHNorm') as THREE.BufferAttribute
+    const cPos = curtain.getAttribute('position') as THREE.BufferAttribute
+    let maxHNorm = 0
+    let maxY = 0
+    for (let i = 0; i < hNorm.count; i++) {
+      maxHNorm = Math.max(maxHNorm, hNorm.getX(i))
+      maxY = Math.max(maxY, cPos.getY(i))
+    }
+    expect(maxHNorm).toBeCloseTo(CURTAIN_TOP_HEADROOM, 4)
+    expect(maxY).toBeGreaterThan(0.5 * CURTAIN_TOP_HEADROOM * 0.95)
+
+    const latAttr = ground.getAttribute('aLat') as THREE.BufferAttribute
+    let minLat = Infinity
+    let maxLat = -Infinity
+    for (let i = 0; i < latAttr.count; i++) {
+      minLat = Math.min(minLat, latAttr.getX(i))
+      maxLat = Math.max(maxLat, latAttr.getX(i))
+    }
+    expect(minLat).toBeCloseTo(-GROUND_OUTER_FEATHER, 4)
+    expect(maxLat).toBeCloseTo(GROUND_OUTER_FEATHER, 4)
   })
 })

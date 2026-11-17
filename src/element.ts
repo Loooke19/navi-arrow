@@ -1,5 +1,8 @@
 /**
- * navi-arrow Web Component <navi-arrow>
+ * [INPUT]: depends on NaviArrowCore and createNaviArrow from ./core; types from ./config
+ * [OUTPUT]: provides NaviArrowElement custom element class and defineNaviArrow registration helper
+ * [POS]: Web Component adapter within src/, bridging HTML attributes to NaviArrowCore imperative methods
+ * [PROTOCOL]: Update this header on change, then check AGENTS.md
  */
 import { NaviArrowCore, createNaviArrow } from './core'
 import type { NaviArrowOptions, BannerConfig, FooterConfig } from './config'
@@ -20,8 +23,8 @@ export class NaviArrowElement extends HTMLElement {
     }
     this.core = createNaviArrow(this, {
       route,
-      curtainHeight: num(this.getAttribute('curtain-height'), 0.5),
-      curtainWidth: num(this.getAttribute('curtain-width'), 0.8),
+      curtainHeight: num(this.getAttribute('curtain-height'), 0.42),
+      curtainWidth: num(this.getAttribute('curtain-width'), 1.25),
       showChevrons: this.getAttribute('chevrons') === 'true',
       banner: {
         distance: this.getAttribute('banner-distance') ?? undefined,
